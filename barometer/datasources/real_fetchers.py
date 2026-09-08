@@ -18,6 +18,8 @@ from __future__ import annotations
 import datetime as _dt
 import io
 import json
+import os
+import re
 import urllib.request
 
 import numpy as np
@@ -41,6 +43,13 @@ SINA_US = {"nasdaq": ".IXIC", "sox": ".SOX"}
 YAHOO = {"dxy": "DX-Y.NYB", "us_short_rate": "^IRX", "wti": "CL=F",
         "brent": "BZ=F", "usdjpy": "JPY=X"}
 CBOE_VIX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+
+CN_QUOTE_SINA = {
+    "brent": ("hf_OIL", 0, 12, 6),
+    "wti": ("hf_CL", 0, 12, 6),
+    "dxy": ("DINIW", 1, 10, 0),
+    "usdjpy": ("fx_susdjpy", 1, 17, 0),
+}
 
 GAPS = ["etf_flow", "breadth_ratio", "limitup_cnt",
         "semis_sales_yoy", "dram_price_yoy", "cloud_capex_yoy", "phone_ship_yoy"]
@@ -192,6 +201,37 @@ def fetch_yahoo(indicator_id: str, start: str, end: str) -> pd.DataFrame:
     df = df.dropna(subset=["close"]).drop_duplicates("date")
     rel = df["ts"].tolist()
     return _fin(df, indicator_id, f"yahoo/{sym}", rel, "date", "close")
+
+
+def fetch_sina_quote_cn(indicator_id: str, start: str, end: str) -> pd.DataFrame:
+    """新浪实时报价快照（国内可直达，替代雅虎日线）。
+    每次抓取返回当日最新一行（data_date=行情日期，release=快照时点，精确到分）。
+    只做增量不做历史回溯——国内部署只用于每日打分；调用方需用 upsert/append 入库。"""
+    code, v_idx, d_idx, t_idx = CN_QUOTE_SINA[indicator_id]
+    url = f"https://hq.sinajs.cn/list={code}"
+    req = urllib.request.Request(
+        url, headers=dict(UA, Referer="https://finance.sina.com.cn"))
+    with urllib.request.urlopen(req, timeout=30) as r:
+        txt = r.read().decode("gbk", "replace")
+    m = re.search(r'="(.*)"', txt)
+    if not m:
+        return pd.DataFrame()
+    f = m.group(1).split(",")
+    if len(f) <= max(v_idx, d_idx, t_idx) or not f[d_idx].strip():
+        return pd.DataFrame()
+    try:
+        value = float(f[v_idx])
+        date = f[d_idx].strip()
+        rel = f"{date} {f[t_idx].strip()[:5]}"
+    except (ValueError, IndexError):
+        return pd.DataFrame()
+    if not (start <= date <= end[:10]):
+        return pd.DataFrame()  # 行情日不在请求窗口
+    out = pd.DataFrame({"data_date": [date], "value": [value]})
+    out["release_datetime"] = rel
+    out["revision"] = "first"
+    out["source"] = "sina_quote(cn)"
+    return out
 
 
 def fetch_bond_us10y(start: str, end: str) -> pd.DataFrame:
@@ -395,27 +435,22 @@ def fetch_all(start: str = "2019-01-01", end: str | None = None) -> tuple:
         put("vix", fetch_cboe_vix(start, end))
     except Exception as e:  # noqa: BLE001
         log.append(f"  [fail] vix: {e}")
-    try:
-        put("dxy", fetch_yahoo("dxy", start, end))
-    except Exception as e:  # noqa: BLE001
-        log.append(f"  [fail] dxy: {e}")
+    # 布伦特/WTI/美元指数/日元：本地用雅虎；国内服务器(BAROMETER_CN_SOURCES=1)用新浪快照
+        use_cn = os.environ.get("BAROMETER_CN_SOURCES") == "1"
+        for iid in ("dxy", "wti", "brent", "usdjpy"):
+            try:
+                df = fetch_sina_quote_cn(iid, start, end) if use_cn \
+                    else fetch_yahoo(iid, start, end)
+                put(iid, df, "新浪实时快照(CN)" if use_cn else f"yahoo/{YAHOO[iid]}")
+            except Exception as e:  # noqa: BLE001
+                log.append(f"  [fail] {iid}: {e}")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         put("us_short_rate", fetch_yahoo("us_short_rate", start, end),
             "^IRX 13周美债(短端利率,评分特征)")
     except Exception as e:  # noqa: BLE001
         log.append(f"  [fail] us_short_rate: {e}")
-    try:
-        put("wti", fetch_yahoo("wti", start, end), "WTI原油期货(领先CPI/利率)")
-    except Exception as e:  # noqa: BLE001
-        log.append(f"  [fail] wti: {e}")
-    try:
-        put("brent", fetch_yahoo("brent", start, end), "布伦特原油期货(全球基准)")
-    except Exception as e:  # noqa: BLE001
-        log.append(f"  [fail] brent: {e}")
-    try:
-        put("usdjpy", fetch_yahoo("usdjpy", start, end), "USDJPY(日元套利交易风向标)")
-    except Exception as e:  # noqa: BLE001
-        log.append(f"  [fail] usdjpy: {e}")
     try:
         put("us10y_rate", fetch_bond_us10y(start, end))
     except Exception as e:  # noqa: BLE001
