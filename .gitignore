@@ -17,6 +17,9 @@ outputs_real/reports/daily_latest.md
 outputs_real/reports/daily_latest.txt
 exports/
 
+# ---------- 本地配置（含邮箱凭据，不入库） ----------
+mail_config.json
+
 # ---------- 缓存与临时 ----------
 .cache/
 *.bak.csv
