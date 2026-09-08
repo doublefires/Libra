@@ -26,3 +26,13 @@ def test_build_mime_with_attachment():
     # 中文文件名也应可编码
     msg2 = build_mime("s", "b", [("模型总结.md", "内容".encode("utf-8"))])
     assert msg2.get_payload()[1].get_filename() is not None
+
+
+def test_parse_recipients():
+    from scripts.send_mail import parse_recipients
+    assert parse_recipients("a@qq.com, b@163.com") == ["a@qq.com", "b@163.com"]
+    assert parse_recipients("a@qq.com;b@qq.com") == ["a@qq.com", "b@qq.com"]
+    assert parse_recipients(" a@qq.com  b@163.com ") == ["a@qq.com", "b@163.com"]
+    assert parse_recipients("") == []
+    assert parse_recipients(None) == []
+    assert parse_recipients(["x@qq.com", " y@163.com "]) == ["x@qq.com", "y@163.com"]

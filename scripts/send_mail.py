@@ -39,7 +39,7 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "mail_config.json"
 CONFIG_TEMPLATE = {
     "sender": "你的QQ号@qq.com",
     "auth_code": "16位SMTP授权码(非QQ密码)",
-    "to": "",                      # 留空 = 发给 sender
+    "to": "",                      # 留空 = 发给 sender；多个收件人用逗号分隔，如 "a@qq.com, b@163.com"
     "host": "smtp.qq.com",
     "port": 465,
     "use_ssl": True,                # QQ/163 用 465 SSL；Gmail 用 587+TLS 则改 False
@@ -55,6 +55,15 @@ def load_config() -> dict:
                                encoding="utf-8")
         return None
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+
+
+def parse_recipients(raw) -> list:
+    """把配置/参数的收件人解析成列表：支持字符串（逗号/空格分隔）或已有列表。"""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [x for x in raw.replace(",", " ").replace(";", " ").split() if x]
+    return [str(x).strip() for x in raw if str(x).strip()]
 
 
 def build_mime(subject: str, body: str,
@@ -117,8 +126,11 @@ def main():
             print(f"[跳过] 找不到 {p}")
 
     msg = build_mime(subject, body, atts, from_addr=cfg["sender"])
-    to = args.to or cfg.get("to") or cfg["sender"]
-    msg["To"] = to
+    if args.to:
+        to_list = parse_recipients(args.to)
+    else:
+        to_list = parse_recipients(cfg.get("to")) or [cfg["sender"]]
+    msg["To"] = ", ".join(to_list)
 
     if cfg.get("use_ssl", True):
         s = smtplib.SMTP_SSL(cfg["host"], int(cfg.get("port", 465)), timeout=60)
@@ -127,8 +139,8 @@ def main():
         s.starttls()
     try:
         s.login(cfg["sender"], cfg["auth_code"])
-        s.sendmail(cfg["sender"], [to], msg.as_string())
-        print(f"已发送: {subject} -> {to}（附件 {len(atts)} 个）")
+        s.sendmail(cfg["sender"], to_list, msg.as_string())
+        print(f"已发送: {subject} -> {', '.join(to_list)}（附件 {len(atts)} 个）")
     finally:
         s.quit()
 
