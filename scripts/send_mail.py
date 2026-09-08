@@ -46,15 +46,44 @@ CONFIG_TEMPLATE = {
     "subject_prefix": "[晴雨表] ",
     "attach_md": True,              # 附件：daily_latest.md
     "attach_charts": False          # True = 附带 outputs_real/charts 下的图
+    ,"imap_host": "imap.qq.com",    # 退订检查用（读收件箱找"回复R"）
+    "imap_port": 993,
+    "imap_ssl": True,
+    "confirm_unsub": True,          # 退订后自动回一封确认邮件
+    "unsubscribed": [],             # 退订名单（脚本自动维护，也可手工加）
+    "last_unsub_check": ""          # 上次检查日期，自动维护
 }
 
 
 def load_config() -> dict:
+    """读配置；文件缺失则生成模板返回 None；新版本新增的键用模板默认值补齐。"""
     if not CONFIG_PATH.exists():
         CONFIG_PATH.write_text(json.dumps(CONFIG_TEMPLATE, ensure_ascii=False, indent=2),
                                encoding="utf-8")
         return None
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    merged = dict(CONFIG_TEMPLATE)
+    merged.update(cfg)   # 文件值优先；文件没有的新键用模板默认
+    return merged
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+
+
+def unsub_intent(body: str) -> bool:
+    """判断回复内容是否为退订意图：首行单独一个 R（不区分大小写）或含 退订/unsubscribe。"""
+    text = (body or "").strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    first = lines[0].lower() if lines else ""
+    return first == "r" or "退订" in text or "unsubscribe" in text.lower()
+
+
+def recipient_exclude(to_list: list, unsubscribed: list | None) -> list:
+    """过滤掉已退订的收件人（不区分大小写）。"""
+    skip = {u.strip().lower() for u in (unsubscribed or []) if u.strip()}
+    return [r for r in to_list if r.lower() not in skip]
 
 
 def parse_recipients(raw) -> list:
@@ -130,6 +159,10 @@ def main():
         to_list = parse_recipients(args.to)
     else:
         to_list = parse_recipients(cfg.get("to")) or [cfg["sender"]]
+    to_list = recipient_exclude(to_list, cfg.get("unsubscribed"))
+    if not to_list:
+        print("收件人已全部退订，本次未发送。")
+        return
     msg["To"] = ", ".join(to_list)
 
     if cfg.get("use_ssl", True):

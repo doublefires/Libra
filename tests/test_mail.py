@@ -36,3 +36,25 @@ def test_parse_recipients():
     assert parse_recipients("") == []
     assert parse_recipients(None) == []
     assert parse_recipients(["x@qq.com", " y@163.com "]) == ["x@qq.com", "y@163.com"]
+
+
+def test_unsub_intent():
+    from scripts.send_mail import unsub_intent
+    assert unsub_intent("R")
+    assert unsub_intent("r")
+    assert unsub_intent("R\n谢谢")          # 首行 R
+    assert unsub_intent("退订")
+    assert unsub_intent("麻烦退订一下")
+    assert unsub_intent("Please unsubscribe")
+    assert not unsub_intent("收到，谢谢")
+    assert not unsub_intent("report")
+    assert not unsub_intent("好的 R 服务正常吗".lower() and "好的R服务正常吗")
+    assert not unsub_intent("")
+
+
+def test_recipient_exclude():
+    from scripts.send_mail import recipient_exclude
+    assert recipient_exclude(["A@QQ.com", "b@163.com"], ["a@qq.com"]) == ["b@163.com"]
+    assert recipient_exclude(["a@qq.com"], ["x@qq.com"]) == ["a@qq.com"]
+    assert recipient_exclude(["a@qq.com", "b@qq.com"], ["a@qq.com", "b@qq.com"]) == []
+    assert recipient_exclude(["a@qq.com"], None) == ["a@qq.com"]
