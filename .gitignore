@@ -1,0 +1,28 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+*.log
+
+# ---------- 生成产物（可随时重建，不入库） ----------
+outputs/
+data/
+data_real/raw/
+outputs_real/charts/
+outputs_real/excel/
+outputs_real/reports/daily_latest.md
+outputs_real/reports/daily_latest.txt
+exports/
+
+# ---------- 缓存与临时 ----------
+.cache/
+*.bak.csv
+# 历史临时脚本（点开头）
+.*.py
+
+# ---------- 数据策略 ----------
+# data_real/processed/ 入库：评分序列、回测结果、纸面台账等研究产物（体积小、可复现）。
+# data_real/raw/ 不入库：原始抓取数据可用 daily.py 随时重拉。

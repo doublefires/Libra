@@ -1,0 +1,16 @@
+# A股科技晴雨表 V1 核心依赖（Python >= 3.10）
+pandas>=2.0
+numpy>=1.24
+
+# 数据获取（真实行情源，需要网络；离线开发/测试用 datasources.synthetic）
+# akshare>=1.14
+
+# 统计与检验（后续显著性分析用）
+# scipy>=1.10
+
+# 报告与图表
+openpyxl>=3.1
+matplotlib>=3.7
+
+# 测试
+pytest>=7.4
