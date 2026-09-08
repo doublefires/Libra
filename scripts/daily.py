@@ -164,15 +164,23 @@ def main():
 
     # ---------- 2) 重算评分（点-in-time，固定比例混合） ----------
     pit = PointInTime(store)
-    # 刷新交易日历：抓完数据后按基准指数(沪深300)交易日重建缓存。
-    # 否则 A股数据前移到缓存末日之后时（如周末/节假日），日历落后会把分数卡在旧日期。
-    try:
-        bm = store.load(settings.BENCHMARK_TARGET)
-        if len(bm):
-            bm_dates = pd.to_datetime(bm["data_date"]).dt.strftime("%Y-%m-%d").tolist()
-            TradingCalendar(bm_dates).save_cache()
-    except Exception as _e:  # noqa: BLE001
-        pass
+    # 日历 = 基准指数(沪深300)交易日 ∪ 下一交易日(决策日)。
+    # 决策日尚未有行情，但评分在决策日 09:30 取数（A股昨日收盘 + 美股昨夜收盘），
+    # 所以必须把决策日加进日历，才能算出"明日开盘"真正用的最新分数——否则会偏旧一天。
+    bm = store.load(settings.BENCHMARK_TARGET)
+    bm_dates = []
+    if len(bm):
+        bm_dates = sorted(set(pd.to_datetime(bm["data_date"]).dt.strftime("%Y-%m-%d")))
+    last_data = pd.Timestamp(bm_dates[-1]) if bm_dates else None
+    decision = None
+    cal_dates = list(bm_dates)
+    if last_data is not None:
+        dec = last_data + pd.tseries.offsets.BDay(1)
+        decision = dec.date()
+        dec_s = dec.strftime("%Y-%m-%d")
+        if dec_s not in cal_dates:
+            cal_dates.append(dec_s)
+    TradingCalendar(cal_dates).save_cache()
     cal = load_trading_calendar(pit)
     hs = HeatScorer(pit, cal)
     dates = cal.dates()
@@ -182,9 +190,10 @@ def main():
         settings.PROCESSED_DIR / "v9_score.csv", index=False, encoding="utf-8-sig")
 
     # ---------- 3) 明日判断 ----------
-    d = pd.Timestamp(score.index[-1])
-    decision = (d + pd.tseries.offsets.BDay(1)).date()
-    s_now, s_prev = float(score.iloc[-1]), float(score.iloc[-2])
+    d = last_data  # 最后一个有行情的数据日（报告归因用）
+    dec_s = decision.strftime("%Y-%m-%d") if decision else None
+    s_now = float(score.loc[dec_s]) if dec_s in score.index else float(score.iloc[-1])
+    s_prev = float(score.iloc[-2])
     dscore = s_now - s_prev
     flow_s = float(macro_flow_score(feat).reindex(dates).iloc[-1])
     trend_s = float(pd.Series(100.0 * np.tanh(2.0 * trend_core_raw(feat)),
