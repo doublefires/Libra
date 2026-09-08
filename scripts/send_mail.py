@@ -58,10 +58,13 @@ def load_config() -> dict:
 
 
 def build_mime(subject: str, body: str,
-               attachments: list[tuple[str, bytes]] | None = None) -> MIMEMultipart:
-    """纯函数：构造邮件 MIME（便于单测）。attachments = [(文件名, 字节内容)]。"""
+               attachments: list[tuple[str, bytes]] | None = None,
+               from_addr: str | None = None) -> MIMEMultipart:
+    """纯函数：构造邮件 MIME（便于单测）。attachments = [(文件名, 字节内容)]。
+    from_addr 给定时设置 From（QQ 要求发件人真实且符合 RFC5322）。"""
     msg = MIMEMultipart()
-    msg["From"] = formataddr((str(Header("Tech Barometer", "utf-8")), "t"))
+    if from_addr:
+        msg["From"] = formataddr((str(Header("Tech Barometer", "utf-8")), from_addr))
     msg["Subject"] = str(Header(subject, "utf-8"))
     msg.attach(MIMEText(body, "plain", "utf-8"))
     for name, data in (attachments or []):
@@ -96,8 +99,9 @@ def main():
         print("先跑 python scripts\\daily.py 生成报告，再发邮件。")
         sys.exit(1)
     body = txt.read_text(encoding="utf-8").strip()
-    first = body.split(chr(10))[0][:20] if body else ""
-    subject = cfg.get("subject_prefix", "[晴雨表] ") + first
+    first = body.split(chr(10))[0] if body else ""
+    date_part = first[:10] if len(first) >= 10 else _dt.date.today().strftime("%Y-%m-%d")
+    subject = cfg.get("subject_prefix", "[晴雨表] ") + date_part + " 晴雨表日报"
 
     atts: list[tuple[str, bytes]] = []
     if cfg.get("attach_md", True) and md.exists():
@@ -112,7 +116,7 @@ def main():
         else:
             print(f"[跳过] 找不到 {p}")
 
-    msg = build_mime(subject, body, atts)
+    msg = build_mime(subject, body, atts, from_addr=cfg["sender"])
     to = args.to or cfg.get("to") or cfg["sender"]
     msg["To"] = to
 
