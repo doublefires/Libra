@@ -45,8 +45,9 @@ CONFIG_TEMPLATE = {
     "use_ssl": True,                # QQ/163 用 465 SSL；Gmail 用 587+TLS 则改 False
     "subject_prefix": "[晴雨表] ",
     "attach_md": True,              # 附件：daily_latest.md
-    "attach_charts": False          # True = 附带 outputs_real/charts 下的图
-    ,"imap_host": "imap.qq.com",    # 退订检查用（读收件箱找"回复R"）
+    "attach_txt": True,             # 附件：daily_latest.txt（纯文本，任何客户端可预览）
+    "attach_charts": False,         # True = 附带 outputs_real/charts 下的图
+    "imap_host": "imap.qq.com",     # 退订检查用（读收件箱找"回复R"）
     "imap_port": 993,
     "imap_ssl": True,
     "confirm_unsub": True,          # 退订后自动回一封确认邮件
@@ -144,6 +145,8 @@ def main():
     atts: list[tuple[str, bytes]] = []
     if cfg.get("attach_md", True) and md.exists():
         atts.append((md.name, md.read_bytes()))
+    if cfg.get("attach_txt", True) and txt.exists():
+        atts.append((txt.name, txt.read_bytes()))
     if cfg.get("attach_charts", False):
         for f in sorted(settings.CHARTS_DIR.glob("*.png")):
             atts.append((f.name, f.read_bytes()))
