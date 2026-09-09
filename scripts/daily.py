@@ -197,38 +197,37 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
             upd_cnt += 1
             lines.append(f'  {nm}：早间无 → 当前{tag} {dd} {rel} = {v:,.3f} ★新')
     lines.append(f'[说明] 新增/更新 {upd_cnt} 项；本次抓取新增 {n_total} 行，数据最新 {data_latest}{err_line}')
-    # ---- 日内分钟行情（雅虎分时：布伦特/WTI/美元指数/USDJPY） ----
+    # ---- 日内分钟行情（雅虎分时 + 新浪实时互为备份，现价取两者中较新者） ----
+    nmap = {'brent': '布伦特', 'wti': 'WTI', 'dxy': '美元指数', 'usdjpy': 'USDJPY'}
+    lines.append('')
+    lines.append('[日内分钟行情]（当日开高低现：雅虎分时；现价取雅虎/新浪中较新者）')
     try:
         from barometer.datasources.intraday import append_log, day_summary  # noqa: E402
-        lines.append('')
-        lines.append('[日内分钟行情]（当日开高低现，雅虎分时）')
         for key in ('brent', 'wti', 'dxy', 'usdjpy'):
+            lq = live.get(key)
             try:
                 s = day_summary(key)
-                if s:
-                    lines.append(f"  {s['name']}：开 {s['o']:.3f} 高 {s['h']:.3f} "
-                                 f"低 {s['l']:.3f} 现 {s['c']:.3f}（{s['last_t']}，"
-                                 f"vs开盘 {s['vs_open']:+.2%}，{s['n']}根）")
-                else:
-                    lines.append(f"  {key}：分钟数据暂不可用")
             except Exception:  # noqa: BLE001
-                lines.append(f"  {key}：分钟数据暂不可用")
+                s = None
+            if s is None and lq:
+                lines.append(f"  {nmap[key]}：现 {lq[2]:,.3f}（新浪实时 {lq[1][5:16]}；雅虎分时暂不可用）")
+            elif s is None:
+                lines.append(f"  {key}：分钟/新浪快照均暂不可用")
+            else:
+                ybar = today + ' ' + s['last_t']          # 雅虎最新 bar 时点（北京）
+                if lq and lq[1] > ybar:                   # 新浪发布时点更新 → 现价取新浪
+                    c, ts, src = lq[2], lq[1][11:16], '新浪实时'
+                else:
+                    c, ts, src = s['c'], s['last_t'], '雅虎bar'
+                lines.append(f"  {s['name']}：开 {s['o']:.3f} 高 {s['h']:.3f} 低 {s['l']:.3f} "
+                             f"现 {c:.3f}（{ts} {src}，vs开盘 {c / s['o'] - 1:+.2%}，"
+                             f"雅虎 {s['n']}根）")
         for key in ('brent', 'wti', 'dxy', 'usdjpy'):
             try:
                 append_log(key, '15m')
                 append_log(key, '60m')
             except Exception:  # noqa: BLE001
                 pass
-        # 实时快照（新浪直连，报告生成时刻；雅虎分时 bar 可能停在 12:00 附近）
-        nmap = {'brent': '布伦特', 'wti': 'WTI', 'dxy': '美元指数', 'usdjpy': 'USDJPY'}
-        lines.append('')
-        lines.append('[实时快照]（新浪直连，报告生成时刻最新值）')
-        for iid in ('brent', 'wti', 'dxy', 'usdjpy'):
-            q = live.get(iid)
-            if q:
-                lines.append(f"  {nmap[iid]}：{q[2]:,.3f}（{q[1]}）")
-            else:
-                lines.append(f"  {nmap[iid]}：新浪快照暂不可用")
     except Exception:  # noqa: BLE001
         pass
     lines.append('[提示] 下一份开盘决策请于下一交易日 09:00 前运行（服务器 cron 自动执行）')
