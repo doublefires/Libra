@@ -396,6 +396,37 @@ def fetch_pe_legu(indicator_id: str, start: str, end: str) -> pd.DataFrame:
 
 
 # ---------------- 主入口 ----------------
+def _realtime_merge(iid: str, start: str, end: str, log: list) -> pd.DataFrame:
+    """快变量单指标合并：雅虎"已完成"日线（历史）+ 新浪当日实时快照。
+
+    雅虎盘中"进行中"的日线（纽约日期=今天）必须丢弃：其 close 更新滞后（实测可
+    停在数小时前），且时间戳固定为当日 12:00(北京)——写入会顶掉新浪的实时行，
+    让盘中[数据更新]显示成"当前 12:00"这种陈旧时点。新浪快照拿不到时退回雅虎
+    （含进行中行），宁有勿缺。"""
+    df_y = None
+    try:
+        df_y = fetch_yahoo(iid, start, end)
+    except Exception as _e:  # noqa: BLE001
+        log.append(f"  [warn] {iid} 雅虎不可用({str(_e)[:60]}) -> 新浪当日快照")
+    df_s = None
+    try:
+        df_s = fetch_sina_quote_cn(iid, start, end)
+    except Exception as _e:  # noqa: BLE001
+        log.append(f"  [warn] {iid} 新浪快照不可用({str(_e)[:60]}) -> 雅虎日线")
+    if df_s is not None and len(df_s):
+        # 新浪拿到当日行：剔除雅虎纽约日=今天（进行中）的行，只留已完成历史
+        if df_y is not None and len(df_y):
+            ny_today = pd.Timestamp.now(tz="America/New_York").strftime("%Y-%m-%d")
+            ny = pd.to_datetime(df_y["data_date"]).dt.strftime("%Y-%m-%d")
+            df_y = df_y[ny < ny_today]
+    parts = [d for d in (df_y, df_s) if d is not None and len(d)]
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts, ignore_index=True)
+    out = out.drop_duplicates("data_date", keep="last").sort_values("data_date")
+    return out.reset_index(drop=True)
+
+
 def fetch_all(start: str = "2019-01-01", end: str | None = None) -> tuple:
     end = end or _dt.date.today().strftime("%Y-%m-%d")
     frames: dict = {}
@@ -435,27 +466,18 @@ def fetch_all(start: str = "2019-01-01", end: str | None = None) -> tuple:
         put("vix", fetch_cboe_vix(start, end))
     except Exception as e:  # noqa: BLE001
         log.append(f"  [fail] vix: {e}")
-    # 布伦特/WTI/美元指数/日元：默认先雅虎，失败/空结果自动切新浪快照兜底；
-    # BAROMETER_CN_SOURCES=1 = 纯国内源（国内服务器用，跳过雅虎直连）。
+    # 布伦特/WTI/美元指数/日元：双源合并（历史=雅虎已完成日线 + 当日=新浪实时快照）。
+    # BAROMETER_CN_SOURCES=1 = 纯国内源（国内服务器用，只取新浪当日快照）。
     try:
         use_cn = os.environ.get("BAROMETER_CN_SOURCES") == "1"
         for iid in ("dxy", "wti", "brent", "usdjpy"):
             try:
-                df = None
-                note = ""
-                if not use_cn:
-                    try:
-                        df = fetch_yahoo(iid, start, end)
-                        if df is not None and len(df):
-                            note = f"yahoo/{YAHOO[iid]}"
-                        else:
-                            df = None
-                    except Exception as _e:  # noqa: BLE001
-                        log.append(f"  [warn] {iid} 雅虎不可用({str(_e)[:60]}) -> 新浪兜底")
-                if df is None:
-                    df = fetch_sina_quote_cn(iid, start, end)
-                    note = "sina实时快照(CN)"
-                put(iid, df, note)
+                if use_cn:
+                    put(iid, fetch_sina_quote_cn(iid, start, end),
+                        "sina实时快照(CN)")
+                else:
+                    put(iid, _realtime_merge(iid, start, end, log),
+                        "yahoo已完成日线+sina当日快照")
             except Exception as e:  # noqa: BLE001
                 log.append(f"  [fail] {iid}: {e}")
     except Exception:  # noqa: BLE001

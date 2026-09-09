@@ -168,12 +168,16 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
     try:
         from barometer.datasources import real_fetchers as _rf  # noqa: E402
         for iid in ('brent', 'wti', 'dxy', 'usdjpy'):
-            qf = _rf.fetch_sina_quote_cn(
-                iid, (now_bj - pd.Timedelta(days=7)).strftime('%Y-%m-%d'), today)
-            if qf is not None and len(qf):
-                q = qf.iloc[-1]
-                live[iid] = (str(q['data_date']), str(q['release_datetime'])[:16],
-                             float(q['value']))
+            try:                     # 逐个抓：单个失败不拖累其余
+                qf = _rf.fetch_sina_quote_cn(
+                    iid, (now_bj - pd.Timedelta(days=7)).strftime('%Y-%m-%d'), today)
+                if qf is not None and len(qf):
+                    q = qf.iloc[-1]
+                    live[iid] = (str(q['data_date']),
+                                 str(q['release_datetime'])[:16],
+                                 float(q['value']))
+            except Exception:  # noqa: BLE001
+                continue
     except Exception:  # noqa: BLE001
         pass
     upd_cnt = 0
