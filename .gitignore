@@ -21,6 +21,7 @@ exports/
 mail_config.json
 # 每日自动生成的早间基准（盘中对比用，9点cron每日覆写）
 data_real/processed/morning_snapshot.json
+data_real/processed/intraday/
 
 # ---------- 缓存与临时 ----------
 .cache/

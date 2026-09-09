@@ -176,6 +176,30 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
             upd_cnt += 1
             lines.append(f'  {nm}：早间无 → 当前 {dd} {rel} = {v:,.3f} ★新')
     lines.append(f'[说明] 新增/更新 {upd_cnt} 项；本次抓取新增 {n_total} 行，数据最新 {data_latest}{err_line}')
+    # ---- 日内分钟行情（雅虎分时：布伦特/WTI/美元指数/USDJPY） ----
+    try:
+        from barometer.datasources.intraday import append_log, day_summary  # noqa: E402
+        lines.append('')
+        lines.append('[日内分钟行情]（当日开高低现，雅虎分时）')
+        for key in ('brent', 'wti', 'dxy', 'usdjpy'):
+            try:
+                s = day_summary(key)
+                if s:
+                    lines.append(f"  {s['name']}：开 {s['o']:.3f} 高 {s['h']:.3f} "
+                                 f"低 {s['l']:.3f} 现 {s['c']:.3f}（{s['last_t']}，"
+                                 f"vs开盘 {s['vs_open']:+.2%}，{s['n']}根）")
+                else:
+                    lines.append(f"  {key}：分钟数据暂不可用")
+            except Exception:  # noqa: BLE001
+                lines.append(f"  {key}：分钟数据暂不可用")
+        for key in ('brent', 'wti', 'dxy', 'usdjpy'):
+            try:
+                append_log(key, '15m')
+                append_log(key, '60m')
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
     lines.append('[提示] 下一份开盘决策请于下一交易日 09:00 前运行（服务器 cron 自动执行）')
     for ln in lines:
         print(ln)
