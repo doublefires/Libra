@@ -272,6 +272,20 @@ def main():
     except Exception as e:  # noqa: BLE001
         fetch_err = str(e)
 
+    # ---------- 1.5) 刷新 processed OHLC 缓存（store 只存收盘；旧缓存会让回测/纸面停在老日期） ----------
+    try:
+        from barometer.backtest import ohlc as _ohlc_ref  # noqa: E402
+        cache = settings.PROCESSED_DIR / f"ohlc_{args.target}.csv"
+        cmax = str(pd.read_csv(cache, usecols=["date"])["date"].max())[:10] if cache.exists() else ""
+        smax = str(store.load(args.target)["data_date"].max())[:10]
+        if cmax < smax:
+            df = _ohlc_ref._fetch_sina_ohlc(args.target)
+            if df is not None and len(df):
+                df.to_csv(cache, index=False, encoding="utf-8-sig")
+                print(f"[ohlc] {args.target} 缓存刷新 {cmax or '无'} -> {df['date'].max()}")
+    except Exception as _e:  # noqa: BLE001
+        pass
+
     # ---------- 2) 重算评分（点-in-time，固定比例混合） ----------
     pit = PointInTime(store)
     # 日历 = 基准指数(沪深300)交易日 ∪ 未来决策日。
