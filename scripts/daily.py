@@ -189,7 +189,7 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
             md_, mrel, mv = m['dd'], m['rel'], float(m['value'])
             dv = v - mv
             pct = ('(%.2f%%)' % (dv / abs(mv) * 100)) if mv else ''
-            flag = ' ★更新' if (dd, rel) != (md_, mrel) or abs(dv) > 1e-12 else ''
+            flag = ' ★更新' if (dd, rel) != (md_, mrel) or abs(dv) > 5e-4 else ''
             if flag:
                 upd_cnt += 1
             lines.append(f'  {nm}：早间 {md_} {mrel} = {mv:,.3f} → 当前{tag} {dd} {rel} = {v:,.3f}  Δ{dv:+.3f}{pct}{flag}')
