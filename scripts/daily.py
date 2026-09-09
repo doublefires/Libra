@@ -353,10 +353,21 @@ def main():
         "| > 0 | 不减仓 | ≤-1% 加 0.5 成（>+20 时 1.5% 加 1.5 成） |\n"
         "| ≤ 0 | 2%减0.5成→2.5%减完→回吐1.5%清仓 | ≤-1% 加 0.5 成（<-20 不接飞刀） |\n",
         encoding="utf-8")
-    txt.write_text(
-        f"{decision}  Score {s_now:+.1f}（{_label(s_now)}，Δ{dscore:+.1f}）  "
-        f"目标 {tgt:.0%}｜当前 {cur_pos:.0%}（{pos_src}）：{advice}｜{rally_rule}；{dip_rule}\n",
-        encoding="utf-8")
+    txt_lines = [
+        f"{decision}  Score {s_now:+.1f}（{_label(s_now)}，Δ{dscore:+.1f}）",
+        f"宏观 {flow_s:+.0f}  趋势 {trend_s:+.0f}  目标 {tgt:.0%}｜当前 {cur_pos:.0%}（{pos_src}）",
+        f"调仓建议：{advice}",
+        f"盘中：{rally_rule}；{dip_rule}",
+        "",
+        f"【2026-03+ 回测】{win_str}",
+        (f"【轮动】{rot_str}" if rot_str else ""),
+        (f"轮动建议：{rot_advice}" if rot_advice else ""),
+        "",
+        "【输入数据（决策 " + str(decision) + " 09:30 点-in-time 最新可用）】",
+    ]
+    for nm, iid, dd, rel, v in snap:
+        txt_lines.append(f"  {nm}：数据日 {dd}，{rel} 起可用，值 {v:,.3f}")
+    txt.write_text("\n".join(txt_lines) + "\n", encoding="utf-8")
     print(f"报告: {md}  /  摘要: {txt}")
 
 
