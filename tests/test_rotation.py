@@ -209,3 +209,53 @@ def test_hedge_allow_on_keeps_hedge():
                           hedge_allow=np.array([True, True, True]), fee=0.0)
     assert np.allclose(d["hw"], 0.5)
     assert np.allclose(d["wh"], 0.5)
+
+
+def test_emerg_sell_triggers_on_crash():
+    """盘中跌破触发价 → 紧急卖出（与分数无关）。"""
+    kc = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [101.0],
+                       "low": [95.0], "close": [95.5]})
+    o, c = flat_h(1)
+    d = simulate_rotation(kc, o, c, wf(1.0, 0.0), init_wk=1.0, fee=0.0,
+                          emerg_sell=(0.03, 2.0))
+    assert d["wf_sell"].iloc[0] > 0.19   # 跌破 -3%(97) → 卖 2 成
+
+
+def test_emerg_buy_needs_stabilize_close():
+    """深跌但收盘没回到触发价上方 → 不紧急买；企稳才买。"""
+    kc = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [100.5],
+                       "low": [95.0], "close": [94.5]})
+    o, c = flat_h(1)
+    d = simulate_rotation(kc, o, c, wf(0.9, 0.1), init_wk=0.9, init_wh=0.1, fee=0.0,
+                          emerg_buy=(0.03, 1.0))
+    assert d["wf_buy"].iloc[0] == 0.0
+    kc2 = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [101.0],
+                        "low": [95.0], "close": [98.0]})
+    d2 = simulate_rotation(kc2, o, c, wf(0.9, 0.1), init_wk=0.9, init_wh=0.1, fee=0.0,
+                           emerg_buy=(0.03, 1.0))
+    assert d2["wf_buy"].iloc[0] > 0.09
+
+
+def test_emerg_sell_triggers_on_crash():
+    """盘中跌破触发价 → 紧急卖出（与分数无关）。"""
+    kc = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [101.0],
+                       "low": [95.0], "close": [95.5]})
+    o, c = flat_h(1)
+    d = simulate_rotation(kc, o, c, wf(1.0, 0.0), init_wk=1.0, fee=0.0,
+                          emerg_sell=(0.03, 2.0))
+    assert d["wf_sell"].iloc[0] > 0.19   # 跌破 -3%(97) → 卖 2 成
+
+
+def test_emerg_buy_needs_stabilize_close():
+    """深跌但收盘没回到触发价上方 → 不紧急买；企稳才买。"""
+    kc = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [100.5],
+                       "low": [95.0], "close": [94.5]})
+    o, c = flat_h(1)
+    d = simulate_rotation(kc, o, c, wf(0.9, 0.1), init_wk=0.9, init_wh=0.1, fee=0.0,
+                          emerg_buy=(0.03, 1.0))
+    assert d["wf_buy"].iloc[0] == 0.0
+    kc2 = pd.DataFrame({"date": ["2026-09-01"], "open": [100.0], "high": [101.0],
+                        "low": [95.0], "close": [98.0]})
+    d2 = simulate_rotation(kc2, o, c, wf(0.9, 0.1), init_wk=0.9, init_wh=0.1, fee=0.0,
+                           emerg_buy=(0.03, 1.0))
+    assert d2["wf_buy"].iloc[0] > 0.09

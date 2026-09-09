@@ -31,7 +31,9 @@ def simulate_rotation(kc: pd.DataFrame, h_open: np.ndarray, h_close: np.ndarray,
                       init_wh: float = 0.0,
                       score: np.ndarray | None = None,
                       waterfall: bool = True,
-                      hedge_allow: np.ndarray | None = None) -> pd.DataFrame:
+                      hedge_allow: np.ndarray | None = None,
+                      emerg_buy: tuple | None = None,
+                      emerg_sell: tuple | None = None) -> pd.DataFrame:
     """双标的轮动模拟。kc: 科创50 OHLC(date,open,high,low,close)；h_*: 与 kc 逐行对齐的对冲价格。
     wfun2(i) -> (wk, wh)：科创50权重、对冲腿权重（其余现金）。
     db：对冲腿再平衡死区（偏离目标超过 db 才交易，交易到目标±db 内）。
@@ -185,6 +187,42 @@ def simulate_rotation(kc: pd.DataFrame, h_open: np.ndarray, h_close: np.ndarray,
                     lk_ += q
                     wf_buy += q * trig_lvl * (1.0 + fee)
                     traded += q_b * oh * (1.0 + fee) + q * trig_lvl * (1.0 + fee)
+        # 6) 紧急动作（实验参数，默认关）：纯价格触发，与分数无关。
+        #    emerg_sell=(跌幅, 成数)：盘中跌超 → 立即按触发价卖出（只卖可卖仓）。
+        #    emerg_buy=(跌幅, 成数)：盘中跌超且收盘回到触发价上方（企稳）→ 紧急买入。
+        if emerg_buy is not None or emerg_sell is not None:
+            lo_ = float(lo_k[i])
+            ck = float(c_k[i])
+            eo = cash + (ak_ + lk_) * ok + (ah_ + lh_) * oh
+            if emerg_sell is not None and ak_ > 1e-9:
+                lvl, qty = emerg_sell
+                trig = ok * (1.0 - lvl)
+                if lo_ <= trig:
+                    val = min(qty / 10.0 * eo, ak_ * trig)
+                    q = min(ak_, val / trig)
+                    if q > 1e-9:
+                        cash += q * trig * (1.0 - fee)
+                        ak_ -= q
+                        wf_sell += q * trig
+                        traded += q * trig * (1.0 + fee)
+            if emerg_buy is not None:
+                lvl, qty = emerg_buy
+                trig = ok * (1.0 - lvl)
+                if lo_ <= trig and ck >= trig:
+                    val = qty / 10.0 * eo
+                    fund = cash / (1.0 + fee) + ah_ * oh
+                    spend = min(val, fund)
+                    if spend > 1e-9:
+                        use_cash = min(spend, cash / (1.0 + fee))
+                        need_bank = spend - use_cash
+                        q_b = min(ah_, need_bank / oh) if need_bank > 1e-9 else 0.0
+                        cash += q_b * oh * (1.0 - fee)
+                        ah_ -= q_b
+                        q = spend / (trig * (1.0 + fee))
+                        cash -= q * trig * (1.0 + fee)
+                        lk_ += q
+                        wf_buy += q * trig * (1.0 + fee)
+                        traded += q_b * oh * (1.0 + fee) + q * trig * (1.0 + fee)
         eq = cash + (ak_ + lk_) * c_k[i] + (ah_ + lh_) * float(h_close[i])
         rows.append({"date": dates[i], "equity": eq, "wk": wk, "wh": wh,
                      "traded": traded,
@@ -216,7 +254,9 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
                  target: str = "idx_kc50", fee: float = 5e-4,
                  init_wk: float = 0.0, init_wh: float | None = None,
                  end: str | None = None, waterfall: bool = True,
-                 corr_gate: float | None = -0.05) -> dict:
+                 corr_gate: float | None = -0.05,
+                 emerg_buy: tuple | None = None,
+                 emerg_sell: tuple | None = None) -> dict:
     """便捷入口：加载科创50+信号+对冲ETF，跑 V9/V8 模型与「模型×对冲」轮动。
     返回 {"model": detail, "rot": rot_df, "kc": ohlc, "hedge_code": code,
           "bank_close": Series}。窗口起点空仓重启（与模型总结口径一致）。
@@ -278,6 +318,7 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
     rot = simulate_rotation(o, ho, hc, wf2, np.zeros(n, bool), np.ones(n),
                             fee=fee, init_wk=init_wk, init_wh=wh_init,
                             score=score_arr, waterfall=waterfall,
-                            hedge_allow=hedge_allow)
+                            hedge_allow=hedge_allow,
+                            emerg_buy=emerg_buy, emerg_sell=emerg_sell)
     return {"model": det, "rot": rot, "kc": o, "hedge_code": hedge_code,
             "bank_close": pd.Series(hc, index=o["date"])}
