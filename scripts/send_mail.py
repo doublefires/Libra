@@ -141,8 +141,10 @@ def main():
     body += "\n\n------------------------------\n" \
         "如需退订每日晴雨表日报：直接回复本邮件，正文首行写 R（或回复“退订”）即可。\n" \
         "（退订名单在邮件服务器本地维护，回复后一般次日生效。）"
+    import re as _re  # noqa: E402
     first = body.split(chr(10))[0] if body else ""
-    date_part = first[:10] if len(first) >= 10 else _dt.date.today().strftime("%Y-%m-%d")
+    m = _re.search(r"\d{4}-\d{2}-\d{2}", first)
+    date_part = m.group(0) if m else _dt.date.today().strftime("%Y-%m-%d")
     subject = cfg.get("subject_prefix", "[晴雨表] ") + date_part + " 晴雨表日报"
 
     atts: list[tuple[str, bytes]] = []
