@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import sys
 from pathlib import Path
@@ -42,6 +43,7 @@ from barometer.timeline import TradingCalendar, load_trading_calendar  # noqa: E
 from barometer.timeline.point_in_time import PointInTime  # noqa: E402
 
 LOOKBACK_DAYS = 30
+NL = chr(10)  # 换行（避免各处转义问题）
 
 
 def _label(x: float) -> str:
@@ -99,7 +101,7 @@ def _last_store_date(store: RawStore):
     best = None
     for iid in store.list_indicators():
         try:
-            s = pd.to_datetime(store.load(iid)["data_date"], errors="coerce")
+            s = pd.to_datetime(store.load(iid)['data_date'], errors='coerce')
             if s.notna().any():
                 mx = s.max()
                 if best is None or mx > best:
@@ -107,6 +109,85 @@ def _last_store_date(store: RawStore):
         except Exception:  # noqa: BLE001
             continue
     return best
+
+
+MORNING_SNAPSHOT = settings.PROCESSED_DIR / 'morning_snapshot.json'
+
+
+def _save_morning_snapshot(s_now: float, decision, snap: list) -> None:
+    """开盘决策模式（09:30 前）跑完存档早间基准，供盘中模式对比。"""
+    try:
+        morning = {
+            'time': str(pd.Timestamp.now())[:16],
+            'decision': str(decision),
+            'score': s_now,
+            'indicators': {iid: {'name': nm, 'dd': dd, 'rel': rel, 'value': v}
+                           for nm, iid, dd, rel, v in snap},
+        }
+        MORNING_SNAPSHOT.write_text(json.dumps(morning, ensure_ascii=False, indent=1),
+                                    encoding='utf-8')
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _load_morning() -> dict | None:
+    if not MORNING_SNAPSHOT.exists():
+        return None
+    try:
+        return json.loads(MORNING_SNAPSHOT.read_text(encoding='utf-8'))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
+                     dscore: float, flow_s: float, trend_s: float, pit,
+                     decision, data_latest: str) -> None:
+    """盘中模式（A股开盘 09:30 之后运行）：不做次日决策，只报
+    ①实时分（当前最新数据） ②各指标较今早早间报告的变化 ③数据更新说明。"""
+    now_bj = pd.Timestamp.now()
+    today = now_bj.strftime('%Y-%m-%d')
+    hhmm = now_bj.strftime('%H:%M')
+    snap = input_snapshot(pit, str(decision))
+    mor = _load_morning()
+    mor_inds = (mor or {}).get('indicators', {})
+    mor_time = (mor or {}).get('time', '无')
+    mor_score = (mor or {}).get('score')
+    n_total = sum(added.values())
+    err_line = '  抓取失败(' + str(fetch_err) + ')，用现有数据' if fetch_err else ''
+    score_delta = ('%.1f' % (s_now - mor_score)) if mor_score is not None else '—'
+    lines = [
+        f'[{today} {hhmm}] 盘中更新模式：非开盘前运行，不做次日决策',
+        f'[评分更新] 实时分 Score {s_now:+.1f}（{_label(s_now)}，Δ{dscore:+.1f}）'
+        f'  宏观 {flow_s:+.0f}  趋势 {trend_s:+.0f}（较早间 {score_delta}；数据截至 {hhmm}，仅供参考）',
+    ]
+    lines.append('[数据更新] 较早间报告(' + str(mor_time) + '，决策 ' + str((mor or {}).get('decision')) + ') 的变化：' if mor else '[数据更新] 无早间基准，以下为当前各指标最新值：')
+    upd_cnt = 0
+    for nm, iid, dd, rel, v in snap:
+        m = mor_inds.get(iid)
+        if m:
+            md_, mrel, mv = m['dd'], m['rel'], float(m['value'])
+            dv = v - mv
+            pct = ('(%.2f%%)' % (dv / abs(mv) * 100)) if mv else ''
+            flag = ' ★更新' if (dd, rel) != (md_, mrel) or abs(dv) > 1e-12 else ''
+            if flag:
+                upd_cnt += 1
+            lines.append(f'  {nm}：早间 {md_} {mrel} = {mv:,.3f} → 当前 {dd} {rel} = {v:,.3f}  Δ{dv:+.3f}{pct}{flag}')
+        else:
+            upd_cnt += 1
+            lines.append(f'  {nm}：早间无 → 当前 {dd} {rel} = {v:,.3f} ★新')
+    lines.append(f'[说明] 新增/更新 {upd_cnt} 项；本次抓取新增 {n_total} 行，数据最新 {data_latest}{err_line}')
+    lines.append('[提示] 下一份开盘决策请于下一交易日 09:00 前运行（服务器 cron 自动执行）')
+    for ln in lines:
+        print(ln)
+    body = NL.join(lines) + NL
+    txt_f = settings.REPORTS_DIR / 'daily_latest.txt'
+    txt_f.write_text(body, encoding='utf-8')
+    md_f = settings.REPORTS_DIR / 'daily_latest.md'
+    md_head = '# 晴雨表 盘中更新 ' + today + ' ' + hhmm
+    md_note = '> 非开盘前运行：不做次日决策。实时分与数据反映生成时刻，仅供盘中参考。'
+    md_f.write_text(md_head + NL + NL + md_note + NL + NL + '```' + NL + body + '```' + NL,
+                    encoding='utf-8')
+    print('报告: ' + str(md_f) + '  /  摘要: ' + str(txt_f))
 
 
 def main():
@@ -126,6 +207,11 @@ def main():
     args = ap.parse_args()
     settings.ensure_dirs()
     store = RawStore()
+
+    # 运行模式：交易日 09:30 前 = 开盘决策模式；之后（盘中/收盘后）= 盘中更新模式（不做次日决策）
+    now_bj = pd.Timestamp.now()
+    _preopen = (now_bj.weekday() < 5 and
+                now_bj < pd.Timestamp(f"{now_bj.strftime('%Y-%m-%d')} 09:30"))
 
     # ---------- 1) 增量抓取 ----------
     today = _dt.date.today()
@@ -206,6 +292,12 @@ def main():
     flow_s = float(macro_flow_score(feat).reindex(dates).iloc[-1])
     trend_s = float(pd.Series(100.0 * np.tanh(2.0 * trend_core_raw(feat)),
                               index=trend_core_raw(feat).index).reindex(dates).iloc[-1])
+
+    # ---------- 盘中模式：到这里就收尾（不做次日决策/目标/建议） ----------
+    if not _preopen:
+        _intraday_report(added, report, fetch_err, s_now, dscore, flow_s, trend_s,
+                         pit, decision, d.strftime("%Y-%m-%d") if d is not None else "")
+        return
 
     o = _ohlc.load_ohlc(store, args.target)
     c = o.set_index("date")["close"]
@@ -310,6 +402,8 @@ def main():
                + "".join(f"| {nm} | {dd} | {rel} | {v:,.3f} |\n"
                          for nm, iid, dd, rel, v in snap)
                + "\n\n")
+
+    _save_morning_snapshot(s_now, decision, snap)   # 早间基准存档（供盘中模式对比）
 
     if args.verbose:
         for line in report["log"]:
