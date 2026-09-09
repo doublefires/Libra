@@ -255,14 +255,17 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
                  init_wk: float = 0.0, init_wh: float | None = None,
                  end: str | None = None, waterfall: bool = True,
                  corr_gate: float | None = -0.05,
-                 emerg_buy: tuple | None = None,
-                 emerg_sell: tuple | None = None) -> dict:
+                 emerg_buy: tuple | None = (0.03, 1.0),
+                 emerg_sell: tuple | None = (0.035, 2.0)) -> dict:
     """便捷入口：加载科创50+信号+对冲ETF，跑 V9/V8 模型与「模型×对冲」轮动。
     返回 {"model": detail, "rot": rot_df, "kc": ohlc, "hedge_code": code,
           "bank_close": Series}。窗口起点空仓重启（与模型总结口径一致）。
     corr_gate：对冲腿相关门槛（默认 -0.05）。2026-09-08 样本外（2020-2024）实测：
     门槛 -0.05 五年 +45.7%/Calmar 1.23 优于无门槛 +40.2%/0.99（2022/2023 银行腿拖累
-    -10pp/-6pp），代价是 2025-2026 regime 让出 ~7pp。None = 不设门槛。"""
+    -10pp/-6pp），代价是 2025-2026 regime 让出 ~7pp。None = 不设门槛。
+    emerg_buy=(跌幅, 成数) / emerg_sell：紧急盘中动作（2026-09-09 扫描采用）：
+    跌 3% 企稳急买 1 成 + 跌 3.5% 急卖 2 成 → 2026-03+ +66.2%→+70.1%、回撤 -12.3%→-11.8%、
+    全期 Calmar 9.87→10.84，四个窗口全面占优；-4.5% 深档急卖实测变差（卖在底部附近）。"""
     from config import settings
     from barometer.backtest import ohlc as _ohlc
 
