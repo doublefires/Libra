@@ -164,9 +164,10 @@ def main():
 
     # ---------- 2) 重算评分（点-in-time，固定比例混合） ----------
     pit = PointInTime(store)
-    # 日历 = 基准指数(沪深300)交易日 ∪ 下一交易日(决策日)。
-    # 决策日尚未有行情，但评分在决策日 09:30 取数（A股昨日收盘 + 美股昨夜收盘），
-    # 所以必须把决策日加进日历，才能算出"明日开盘"真正用的最新分数——否则会偏旧一天。
+    # 日历 = 基准指数(沪深300)交易日 ∪ 未来决策日。
+    # 决策日 = 运行时刻之后最近的一个 A股开盘日（开盘前跑→今天开盘；盘中/收盘后跑→下一开盘），
+    # 评分在决策日 09:30 取数 —— 数据源只会给出运行时刻前已发布的数据，
+    # 因此每次生成的报告用的都是"生成时刻能拿到的最最新数据"（油价等快变量亦如此）。
     bm = store.load(settings.BENCHMARK_TARGET)
     bm_dates = []
     if len(bm):
@@ -175,11 +176,18 @@ def main():
     decision = None
     cal_dates = list(bm_dates)
     if last_data is not None:
+        now_bj = pd.Timestamp.now()
         dec = last_data + pd.tseries.offsets.BDay(1)
+        guard = 0
+        while pd.Timestamp(f"{dec.strftime('%Y-%m-%d')} 09:30") <= now_bj and guard < 12:
+            dec = dec + pd.tseries.offsets.BDay(1)   # 该日开盘已过 → 顺延到下一个开盘日
+            guard += 1
         decision = dec.date()
-        dec_s = dec.strftime("%Y-%m-%d")
-        if dec_s not in cal_dates:
-            cal_dates.append(dec_s)
+        t = last_data + pd.tseries.offsets.BDay(1)
+        while t <= dec:                               # 中间交易日也补进日历（评分轴连续）
+            if t.strftime("%Y-%m-%d") not in cal_dates:
+                cal_dates.append(t.strftime("%Y-%m-%d"))
+            t = t + pd.tseries.offsets.BDay(1)
     TradingCalendar(cal_dates).save_cache()
     cal = load_trading_calendar(pit)
     hs = HeatScorer(pit, cal)
