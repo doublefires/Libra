@@ -19,6 +19,8 @@ exports/
 
 # ---------- 本地配置（含邮箱凭据，不入库） ----------
 mail_config.json
+# 每日自动生成的早间基准（盘中对比用，9点cron每日覆写）
+data_real/processed/morning_snapshot.json
 
 # ---------- 缓存与临时 ----------
 .cache/
