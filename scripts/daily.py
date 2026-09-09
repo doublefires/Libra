@@ -161,8 +161,29 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
         f'  宏观 {flow_s:+.0f}  趋势 {trend_s:+.0f}（较早间 {score_delta}；数据截至 {hhmm}，仅供参考）',
     ]
     lines.append('[数据更新] 较早间报告(' + str(mor_time) + '，决策 ' + str((mor or {}).get('decision')) + ') 的变化：' if mor else '[数据更新] 无早间基准，以下为当前各指标最新值：')
+    # 快变量（布伦特/WTI/美元指数/USDJPY）：生成时刻再抓一次新浪实时快照做"当前(实时)"。
+    # 库内行可能停在最近整点运行时的发布时点（新浪快照/雅虎 bar 时间），盘中直接覆盖展示。
+    # 快照只用于展示与"与早间差异"，不进 store、不参与评分（评分仍用点-in-time 序列）。
+    live = {}
+    try:
+        from barometer.datasources import real_fetchers as _rf  # noqa: E402
+        for iid in ('brent', 'wti', 'dxy', 'usdjpy'):
+            qf = _rf.fetch_sina_quote_cn(
+                iid, (now_bj - pd.Timedelta(days=7)).strftime('%Y-%m-%d'), today)
+            if qf is not None and len(qf):
+                q = qf.iloc[-1]
+                live[iid] = (str(q['data_date']), str(q['release_datetime'])[:16],
+                             float(q['value']))
+    except Exception:  # noqa: BLE001
+        pass
     upd_cnt = 0
     for nm, iid, dd, rel, v in snap:
+        lq = live.get(iid)
+        if lq and lq[1] > rel:      # 新浪实时快照发布时点更新 → 覆盖为"当前(实时)"
+            dd, rel, v = lq
+            tag = '(实时)'
+        else:
+            tag = ''
         m = mor_inds.get(iid)
         if m:
             md_, mrel, mv = m['dd'], m['rel'], float(m['value'])
@@ -171,10 +192,10 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
             flag = ' ★更新' if (dd, rel) != (md_, mrel) or abs(dv) > 1e-12 else ''
             if flag:
                 upd_cnt += 1
-            lines.append(f'  {nm}：早间 {md_} {mrel} = {mv:,.3f} → 当前 {dd} {rel} = {v:,.3f}  Δ{dv:+.3f}{pct}{flag}')
+            lines.append(f'  {nm}：早间 {md_} {mrel} = {mv:,.3f} → 当前{tag} {dd} {rel} = {v:,.3f}  Δ{dv:+.3f}{pct}{flag}')
         else:
             upd_cnt += 1
-            lines.append(f'  {nm}：早间无 → 当前 {dd} {rel} = {v:,.3f} ★新')
+            lines.append(f'  {nm}：早间无 → 当前{tag} {dd} {rel} = {v:,.3f} ★新')
     lines.append(f'[说明] 新增/更新 {upd_cnt} 项；本次抓取新增 {n_total} 行，数据最新 {data_latest}{err_line}')
     # ---- 日内分钟行情（雅虎分时：布伦特/WTI/美元指数/USDJPY） ----
     try:
@@ -198,6 +219,16 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
                 append_log(key, '60m')
             except Exception:  # noqa: BLE001
                 pass
+        # 实时快照（新浪直连，报告生成时刻；雅虎分时 bar 可能停在 12:00 附近）
+        nmap = {'brent': '布伦特', 'wti': 'WTI', 'dxy': '美元指数', 'usdjpy': 'USDJPY'}
+        lines.append('')
+        lines.append('[实时快照]（新浪直连，报告生成时刻最新值）')
+        for iid in ('brent', 'wti', 'dxy', 'usdjpy'):
+            q = live.get(iid)
+            if q:
+                lines.append(f"  {nmap[iid]}：{q[2]:,.3f}（{q[1]}）")
+            else:
+                lines.append(f"  {nmap[iid]}：新浪快照暂不可用")
     except Exception:  # noqa: BLE001
         pass
     lines.append('[提示] 下一份开盘决策请于下一交易日 09:00 前运行（服务器 cron 自动执行）')
