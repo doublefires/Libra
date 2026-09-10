@@ -86,7 +86,7 @@ def fetch_reply_unsubs(cfg: dict, since_date: str) -> list:
             raw = m[0][1] if isinstance(m[0], tuple) else m[0]
             hdr = email.message_from_bytes(raw)
             subject = _decode_hdr(hdr.get("Subject"))
-            if PREFIX not in subject and "Libra" not in subject:
+            if PREFIX not in subject and "Libra" not in subject and "晴雨表" not in subject:
                 continue
             frm = extract_addr(hdr.get("From"))
             if not frm or frm == cfg["sender"].lower():
