@@ -1,4 +1,4 @@
-"""发送晴雨表日报邮件（QQ/163/Gmail 等通用 SMTP）。
+"""发送 Libra 日报邮件（QQ/163/Gmail 等通用 SMTP）。
 
 用法：
   1) 首次运行自动生成模板配置 mail_config.json（已 gitignore，凭据不会进仓库），
@@ -43,7 +43,7 @@ CONFIG_TEMPLATE = {
     "host": "smtp.qq.com",
     "port": 465,
     "use_ssl": True,                # QQ/163 用 465 SSL；Gmail 用 587+TLS 则改 False
-    "subject_prefix": "[晴雨表] ",
+    "subject_prefix": "[Libra] ",
     "attach_md": True,              # 附件：daily_latest.md
     "attach_txt": True,             # 附件：daily_latest.txt（纯文本，任何客户端可预览）
     "attach_charts": False,         # True = 附带 outputs_real/charts 下的图
@@ -103,7 +103,7 @@ def build_mime(subject: str, body: str,
     from_addr 给定时设置 From（QQ 要求发件人真实且符合 RFC5322）。"""
     msg = MIMEMultipart()
     if from_addr:
-        msg["From"] = formataddr((str(Header("Tech Barometer", "utf-8")), from_addr))
+        msg["From"] = formataddr((str(Header("Libra", "utf-8")), from_addr))
     msg["Subject"] = str(Header(subject, "utf-8"))
     msg.attach(MIMEText(body, "plain", "utf-8"))
     for name, data in (attachments or []):
@@ -114,7 +114,7 @@ def build_mime(subject: str, body: str,
 
 
 def main():
-    ap = argparse.ArgumentParser(description="发送晴雨表日报邮件")
+    ap = argparse.ArgumentParser(description="发送 Libra 日报邮件")
     ap.add_argument("--to", type=str, default=None, help="收件邮箱（覆盖配置）")
     ap.add_argument("--attach", type=str, default=None, nargs="*",
                     help="附加 outputs_real 下的文件（如 comparison_2y_v8.png）")
@@ -139,13 +139,13 @@ def main():
         sys.exit(1)
     body = txt.read_text(encoding="utf-8").strip()
     body += "\n\n------------------------------\n" \
-        "如需退订每日晴雨表日报：直接回复本邮件，正文首行写 R（或回复“退订”）即可。\n" \
+        "如需退订Libra 日报：直接回复本邮件，正文首行写 R（或回复“退订”）即可。\n" \
         "（退订名单在邮件服务器本地维护，回复后一般次日生效。）"
     import re as _re  # noqa: E402
     first = body.split(chr(10))[0] if body else ""
     m = _re.search(r"\d{4}-\d{2}-\d{2}", first)
     date_part = m.group(0) if m else _dt.date.today().strftime("%Y-%m-%d")
-    subject = cfg.get("subject_prefix", "[晴雨表] ") + date_part + " 晴雨表日报"
+    subject = cfg.get("subject_prefix", "[Libra] ") + date_part + " Libra 日报"
 
     atts: list[tuple[str, bytes]] = []
     if cfg.get("attach_md", True) and md.exists():

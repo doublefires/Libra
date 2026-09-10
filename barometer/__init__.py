@@ -1,11 +1,11 @@
-"""A股科技晴雨表 V1 主包（tech-barometer）。
+"""Libra（A股科技晴雨表）V1 主包。
 
 分层（自下而上，严格分离）：
   datasources  数据源层      —— 只负责「抓」
   rawdata      原始数据层    —— 原始、不可修改、带修订版本
   indicators   指标加工层    —— 四维指标（Level/Trend/Momentum/Percentile）
   timeline     信息时间轴引擎 —— point-in-time 视图，防未来函数闸门（横向层）
-  scoring      晴雨表评分层  —— 七大模块(-2~+2) → 总分(-14~+14) → 市场状态
+  scoring      Libra 评分层  —— 七大模块(-2~+2) → 总分(-14~+14) → 市场状态
   regime       市场环境引擎  —— 四种 Regime 识别（横向层）
   backtest     回测引擎      —— T+5/10/20/60 前瞻收益（绝对 + 相对）
   analytics    分析与报告层  —— 胜率/收益/回撤/图表/Excel 报告

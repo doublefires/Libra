@@ -1,4 +1,4 @@
-# A股科技晴雨表 V1 核心依赖（Python >= 3.10）
+# Libra · A股科技晴雨表 V1 核心依赖（Python >= 3.10）
 pandas>=2.0
 numpy>=1.24
 

@@ -1,7 +1,7 @@
 """导出可分享的最终模型包：代码 + 配置 + 数据快照 + 报告 + 使用说明 → zip。
 
 用法：
-  python scripts/export_model.py                 # 导出到 exports/tech-barometer-v9-YYYYMMDD.zip
+  python scripts/export_model.py                 # 导出到 exports/libra-v9-YYYYMMDD.zip
   python scripts/export_model.py --no-data       # 不带数据快照（只代码+报告，体积更小）
 
 分享给他人：解压 → pip install -r requirements.txt → 双击 daily.bat（或运行 scripts/daily.py）。
@@ -18,9 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 ROOT = Path(__file__).resolve().parents[1]
 
-README = """# A股科技晴雨表 · 最终模型包（V9 + V8 + waterfall）
+README = """# Libra · 最终模型包（V9 + V8 + waterfall）
 
-科创50（STAR50）宏观冷热"晴雨表"：每日打分（-100~+100）→ 目标仓位 → 盘中操作规则。
+科创50（STAR50）宏观冷热指标：每日打分（-100~+100）→ 目标仓位 → 盘中操作规则。
 
 ## 最终成绩（T+1、费率5bp、center=0.85，只用2025+数据）
 
@@ -86,7 +86,7 @@ def main():
     outdir = ROOT / "exports"
     outdir.mkdir(exist_ok=True)
     stamp = _dt.date.today().strftime("%Y%m%d")
-    zip_path = outdir / f"tech-barometer-v9-{stamp}.zip"
+    zip_path = outdir / f"libra-v9-{stamp}.zip"
 
     include_dirs = {
         "barometer": ROOT / "barometer",

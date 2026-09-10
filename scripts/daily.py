@@ -299,7 +299,7 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
     txt_f = settings.REPORTS_DIR / 'daily_latest.txt'
     txt_f.write_text(body, encoding='utf-8')
     md_f = settings.REPORTS_DIR / 'daily_latest.md'
-    md_head = '# 晴雨表 盘中更新 ' + today + ' ' + hhmm
+    md_head = '# Libra 盘中更新 ' + today + ' ' + hhmm
     md_note = '> 非开盘前运行：不做次日决策。实时分与数据反映生成时刻，仅供盘中参考。'
     md_f.write_text(md_head + NL + NL + md_note + NL + NL + '```' + NL + body + '```' + NL,
                     encoding='utf-8')
@@ -558,7 +558,7 @@ def main():
     added_str = ", ".join(f"{k}+{v}" for k, v in sorted(added.items())) or "无"
     gaps_str = ", ".join(report["gaps"]) or "无"
     md.write_text(
-        "# 每日晴雨表 " + str(today) + "\n\n"
+        "# Libra 每日报告 " + str(today) + "\n\n"
         "## 明天（" + str(decision) + "）判断\n\n"
         "| 项目 | 数值 |\n|---|---|\n"
         f"| Score | {s_now:+.1f}（{_label(s_now)}，Δ{dscore:+.1f}） |\n"

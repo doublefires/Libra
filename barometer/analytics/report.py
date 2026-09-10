@@ -27,7 +27,7 @@ def _layer_cn(layer: str) -> str:
 
 
 def write_markdown(score_df: pd.DataFrame | None, res_df: pd.DataFrame,
-                   path=None, title: str = "A股科技晴雨表 回测报告") -> str:
+                   path=None, title: str = "Libra 回测报告") -> str:
     """把回测结果与（可选）每日评分汇总成中文 Markdown 报告。"""
     path = path or settings.REPORTS_DIR / "backtest_report.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +123,7 @@ def write_excel(daily: pd.DataFrame | None, res: pd.DataFrame,
     path.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(path, engine="openpyxl") as w:
         if daily is not None and len(daily):
-            daily.to_excel(w, sheet_name="每日晴雨表", index=False)
+            daily.to_excel(w, sheet_name="Libra日报", index=False)
         if len(res):
             res.to_excel(w, sheet_name="回测明细", index=False)
         if summaries:

@@ -3,7 +3,7 @@
 用法：
   python scripts/check_unsub.py            # 检查自上次以来的新回复，更新退订名单
 
-规则：收件人回复我们发出的日报（主题含 [晴雨表]），正文首行是 R（或含 退订/unsubscribe）
+规则：收件人回复我们发出的日报（主题含 [Libra]），正文首行是 R（或含 退订/unsubscribe）
 → 该地址加入 mail_config.json 的 unsubscribed 名单，之后 send_mail.py 不再发给它。
 前提：QQ 邮箱已开启 IMAP（SMTP 授权码同用于 IMAP）。
 """
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.send_mail import (  # noqa: E402
     build_mime, load_config, save_config, unsub_intent)
 
-PREFIX = "[晴雨表]"
+PREFIX = "[Libra]"
 
 
 def _decode_hdr(v) -> str:
@@ -62,7 +62,7 @@ def _body_text(msg) -> str:
 
 
 def fetch_reply_unsubs(cfg: dict, since_date: str) -> list:
-    """IMAP 读收件箱：返回 since_date 之后、主题含[晴雨表]、正文为退订意图的发件邮箱。"""
+    """IMAP 读收件箱：返回 since_date 之后、主题含[Libra]、正文为退订意图的发件邮箱。"""
     if cfg.get("imap_ssl", True):
         conn = imaplib.IMAP4_SSL(cfg["imap_host"], int(cfg.get("imap_port", 993)),
                                  timeout=60)
@@ -86,7 +86,7 @@ def fetch_reply_unsubs(cfg: dict, since_date: str) -> list:
             raw = m[0][1] if isinstance(m[0], tuple) else m[0]
             hdr = email.message_from_bytes(raw)
             subject = _decode_hdr(hdr.get("Subject"))
-            if PREFIX not in subject and "晴雨表" not in subject:
+            if PREFIX not in subject and "Libra" not in subject:
                 continue
             frm = extract_addr(hdr.get("From"))
             if not frm or frm == cfg["sender"].lower():
@@ -106,9 +106,9 @@ def fetch_reply_unsubs(cfg: dict, since_date: str) -> list:
 
 
 def send_confirm(cfg: dict, addr: str) -> None:
-    body = ("您好，已按您的回复退订每日晴雨表日报，之后不会再向该邮箱发送。\n"
+    body = ("您好，已按您的回复退订Libra 日报，之后不会再向该邮箱发送。\n"
             "如需恢复订阅，回复本邮件并在正文首行写 Y 即可。")
-    msg = build_mime("[晴雨表] 退订成功", body, from_addr=cfg["sender"])
+    msg = build_mime("[Libra] 退订成功", body, from_addr=cfg["sender"])
     msg["To"] = addr
     s = smtplib.SMTP_SSL(cfg["host"], int(cfg.get("port", 465)), timeout=60) if \
         cfg.get("use_ssl", True) else smtplib.SMTP(cfg["host"], int(cfg.get("port", 587)), timeout=60)

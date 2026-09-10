@@ -148,7 +148,7 @@ def fetch_today_morning_mail(cfg: dict, day: str):
             raw = m[0][1] if isinstance(m[0], tuple) else m[0]
             hdr = email.message_from_bytes(raw)
             subj = _decode_hdr(hdr.get("Subject"))
-            if "晴雨表" not in subj:
+            if "Libra" not in subj:
                 continue
             typ3, full = conn.fetch(num, "(RFC822)")
             if typ3 != "OK" or not full or not full[0]:
@@ -249,7 +249,7 @@ def seed_from_mail(day: str, force: bool) -> bool:
             return True
     got = fetch_today_morning_mail(cfg, day)
     if not got:
-        print("未在已发送中找到", day, "的开盘决策邮件（主题需含[晴雨表]、正文首行为日期+Score）。")
+        print("未在已发送中找到", day, "的开盘决策邮件（主题需含[Libra]、正文首行为日期+Score）。")
         print("提示：可改用 --pit 按库内点-in-time 重建。")
         return False
     sent_s, subj, body = got
