@@ -61,7 +61,7 @@ def _label(x: float) -> str:
 # 评分/信号输入指标的中文名（展示用）
 INPUT_NAMES = {
     "us10y_rate": "美债10Y(%)", "us_short_rate": "短端^IRX(%)",
-    "us_cpi_yoy": "美CPI同比(%)", "brent": "布伦特($)",
+    "us_cpi_yoy": "美CPI同比(%)", "us_ppi_yoy": "美核心PPI同比(%)", "brent": "布伦特($)",
     "dxy": "美元指数", "usdjpy": "USDJPY", "sox": "费半(SOX)",
     "vix": "VIX", "dr007": "DR007/Shibor1W(%)", "turnover": "两市成交额(亿)",
     "margin_balance": "两融余额(亿)", "pe_kc50": "科创50 PE", "realized_vol": "已实现波动(20dσ%)",

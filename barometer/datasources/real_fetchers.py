@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import urllib.parse
 import urllib.request
 
 import numpy as np
@@ -242,6 +243,39 @@ def fetch_bond_us10y(start: str, end: str) -> pd.DataFrame:
     raw = _slice(raw, "date", start, end)
     return _fin(raw, "us10y_rate", "akshare/bond_zh_us_rate", _rel_us_dates,
                 "date", "value")
+
+
+# 东财「美国经济数据」接口（国内可达；金十系 akshare 接口的 PPI 已停更在 2025-09，
+# 该接口 2026-09 仍在更新，且带 PUBLISH_DATE 可直接当点-in-time 发布时点）
+EM_US_MACRO_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+EM_US_SERIES = {
+    "us_ppi_yoy": ("EMG00177799", "美国:核心PPI:非季调:同比"),
+    "us_ppi_mom": ("EMG00177897", "美国:PPI:季调:环比"),
+}
+
+
+def fetch_macro_us_ppi_eastmoney(indicator_id: str, start: str, end: str) -> pd.DataFrame:
+    """东财美国 PPI（同比/环比）。发布日期按美东 08:30 ≈ 北京 20:30 记为可用时点。"""
+    iid, _name = EM_US_SERIES[indicator_id]
+    params = {"reportName": "RPT_ECONOMICVALUE_USA", "columns": "ALL", "source": "WEB",
+              "client": "WEB", "pageNumber": 1, "pageSize": 500,
+              "sortColumns": "REPORT_DATE", "sortTypes": "-1",
+              "filter": f'(INDICATOR_ID="{iid}")'}
+    txt = _http(EM_US_MACRO_URL + "?" + urllib.parse.urlencode(params),
+                referer="https://data.eastmoney.com/")
+    j = json.loads(txt)
+    rows = ((j.get("result") or {}).get("data") or [])
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df["data_date"] = pd.to_datetime(df["REPORT_DATE"], errors="coerce").dt.strftime("%Y-%m-%d")
+    df["value"] = pd.to_numeric(df["VALUE"], errors="coerce")
+    df = df.dropna(subset=["data_date", "value"])
+    rel = pd.to_datetime(df["PUBLISH_DATE"], errors="coerce") + pd.Timedelta(hours=20, minutes=30)
+    df["release_datetime"] = rel.dt.strftime("%Y-%m-%d %H:%M")
+    df = _slice(df, "data_date", start, end).sort_values("data_date")
+    return _fin(df, indicator_id, "eastmoney/us_macro",
+                df["release_datetime"].tolist(), "data_date", "value")
 
 
 def fetch_macro_us_cpi(start: str, end: str) -> pd.DataFrame:
@@ -495,6 +529,11 @@ def fetch_all(start: str = "2019-01-01", end: str | None = None) -> tuple:
         put("us_cpi_yoy", fetch_macro_us_cpi(start, end))
     except Exception as e:  # noqa: BLE001
         log.append(f"  [fail] us_cpi_yoy: {e}")
+    try:
+        put("us_ppi_yoy", fetch_macro_us_ppi_eastmoney("us_ppi_yoy", start, end),
+            "eastmoney 美国核心PPI同比")
+    except Exception as e:  # noqa: BLE001
+        log.append(f"  [fail] us_ppi_yoy: {e}")
     # 3) 中国流动性 + 宏观
     try:
         put("dr007", fetch_shibor_1w(start, end), "Shibor1W 代理 DR007")

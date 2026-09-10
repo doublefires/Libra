@@ -26,7 +26,7 @@ END = "2025-06-30"
 # 宏观月度指标的公布滞后（data_date 所在月 + 1 月后第 N 天 09:30 发布）
 _MACRO_REL = {
     "pmi": 9, "ppi_yoy": 9, "semis_sales_yoy": 9, "dram_price_yoy": 6,
-    "us_cpi_yoy": 12,
+    "us_cpi_yoy": 12, "us_ppi_yoy": 12, "us_ppi_mom": 12,
     "m2_yoy": 15, "m1_yoy": 15, "indus_yoy": 15, "cloud_capex_yoy": 20,
     "phone_ship_yoy": 12,
 }
@@ -95,6 +95,8 @@ class SyntheticSource:
             "cloud_capex_yoy": (12.0, 6.0, 1.0),
             "phone_ship_yoy": (-1.0, 4.0, 0.8),
             "us_cpi_yoy": (3.0, 0.8, 0.3),
+            "us_ppi_yoy": (3.5, 0.8, 0.35),
+            "us_ppi_mom": (0.20, 0.15, 0.06),
         }
         for iid, (base, beta, noise) in monthly.items():
             vals = base + beta * f_m + self.rng.normal(0, noise, len(f_m))

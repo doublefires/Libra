@@ -47,6 +47,8 @@ _reg([
     _e("us_short_rate", "global_fund", "美国短端利率(3M国库券,央行利率代理)",
        False, "daily", 3),
     _e("us_cpi_yoy", "global_fund", "美国CPI同比", False, "monthly", 5),
+    _e("us_ppi_yoy", "global_fund", "美国核心PPI同比", False, "monthly", 5),
+    _e("us_ppi_mom", "global_fund", "美国PPI环比", False, "monthly", 5),
     _e("wti", "global_fund", "WTI原油期货(通胀/利率领先指标)", False, "daily", 3),
     _e("brent", "global_fund", "布伦特原油期货(全球基准)", False, "daily", 3),
     _e("usdjpy", "global_fund", "美元兑日元(日元套利交易风向标)", True, "daily", 3),
