@@ -139,6 +139,45 @@ def _load_morning() -> dict | None:
         return None
 
 
+BANDS = [("≤-60", -1e9, -60), ("-60~-40", -60, -40), ("-40~-20", -40, -20),
+         ("-20~0", -20, 0), ("0~20", 0, 20), ("20~40", 20, 40),
+         ("40~60", 40, 60), (">60", 60, 1e9)]
+
+
+def signal_health(score: pd.Series, closes: pd.Series, look: int = 60,
+                  recent_days: int = 120) -> tuple:
+    """分数有效性监控（审计 2026-09-10 加入）：
+    ① 滚动 look 日 IC(T+20)（秩相关，用 rank 序列的滚动 pearson）；
+    ② 近 recent_days 个滚动 IC 中为负的占比；
+    ③ 当前分数档位近一年 T+20 均值与胜率。
+    2020-2024 样本外实测 IC≈0（分档单调性破裂）：本监控用于及时发现"分数失效"的制度切换。"""
+    kc = closes.reindex(score.index).ffill()
+    fwd20 = kc.shift(-20) / kc - 1.0
+    rs, rf = score.rank(pct=True), fwd20.rank(pct=True)
+    roll = rs.rolling(look).corr(rf).dropna()
+    ic_now = float(roll.iloc[-1]) if len(roll) else float("nan")
+    tail = roll.tail(recent_days)
+    neg_share = float((tail < 0).mean()) if len(tail) else float("nan")
+    s_now = float(score.dropna().iloc[-1])
+    band, lo, hi = next(((nm, l, h) for nm, l, h in BANDS if l < s_now <= h),
+                        ("?", -1e9, 1e9))
+    hist = pd.DataFrame({"s": score.tail(250), "f": fwd20.tail(250)}).dropna()
+    in_band = hist[(hist["s"] > lo) & (hist["s"] <= hi)]["f"]
+    if len(in_band):
+        bmean, bwin, bn = float(in_band.mean()), float((in_band > 0).mean()), len(in_band)
+    else:
+        bmean = bwin = float("nan")
+        bn = 0
+    warn = ""
+    if ic_now == ic_now and ic_now < 0 and neg_share > 0.55:
+        warn = "  ⚠ 分数近期失效（IC持续为负），建议按纪律降仓/回避加仓"
+    elif ic_now == ic_now and ic_now < 0:
+        warn = "  ⚠ 滚动IC转负，留意"
+    line = (f"滚动{look}日IC(T+20) {ic_now:+.2f}；近{recent_days}日负IC占比 {neg_share:.0%}"
+            f"；当前档位 {band} 近一年 T+20 均值 {bmean:+.2%}/胜率 {bwin:.0%}（n={bn}）{warn}")
+    return line, ic_now, neg_share
+
+
 def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
                      dscore: float, flow_s: float, trend_s: float, pit,
                      decision, data_latest: str) -> None:
@@ -464,6 +503,8 @@ def main():
         print(f"[轮动] {rot_str}")
         if rot_advice:
             print(f"[轮动调仓] {rot_advice}")
+    health_line, ic_now, neg_share = signal_health(score, c)
+    print(f"[信号有效性] {health_line}")
     # ---------- 输入数据快照（决策点 as-of 实际用到的最新数据 + 数据日期） ----------
     snap = input_snapshot(pit, str(decision))
     print(f"[输入数据] 决策 {decision} 09:30 时点可用（点-in-time 各指标最新一行，精确到分）：")
@@ -520,6 +561,10 @@ def main():
         + f"- 抓取范围 {start} ~ {end}（{tag}），新增 {n_total} 行：{added_str}\n"
         f"- 暂缺 {len(report['gaps'])} 项：{gaps_str}\n"
         f"- 评分序列已刷新：data_real/processed/v9_score.csv（w_flow={args.w_flow:.2f}）\n\n"
+        "## 信号有效性监控\n\n"
+        f"- {health_line}\n"
+        "- 参考：2020-2024 样本外 Score 与未来 20 日收益的 IC≈0（分档单调性破裂），"
+        "分数在 2025+ 制度内有效——IC 持续为负时应视为制度切换信号。\n\n"
         "## 最近 10 日分数\n\n"
         "| 日期 | Score | 分档 |\n|---|---|---|\n" + recent + "\n\n"
         "## 盘中规则（waterfall 默认）\n\n"
@@ -536,6 +581,9 @@ def main():
         f"【2026-03+ 回测】{win_str}",
         (f"【轮动】{rot_str}" if rot_str else ""),
         (f"轮动建议：{rot_advice}" if rot_advice else ""),
+        "",
+        "",
+        f"【信号有效性】{health_line}",
         "",
         "【输入数据（决策 " + str(decision) + " 09:30 点-in-time 最新可用）】",
     ]
