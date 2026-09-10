@@ -139,6 +139,25 @@ def _load_morning() -> dict | None:
         return None
 
 
+def regime_note(feat: dict, closes: pd.Series) -> str:
+    """缩量震荡制度提示（2026-09-10 加入，回应"8月至今缩量波动"场景）：
+
+    缩量（成交额 z20<0）+ 无趋势（|20日收益|<8%）时，银行腿（512800）的负相关保护往往失效
+    （2026-08 至今实测银行腿贡献 -1.7pp），是"保费期"；趋势/崩盘月则为正贡献。
+    实测（8月至今窗口）：去掉银行腿可少亏 1.7pp，但 2026-03+ 要少赚 21.4pp、2025+ 少赚 24.4pp
+    → 不设为默认，仅作提示，供人工决定是否降对冲。
+    """
+    tz = float(feat["turnover_z20"].dropna().iloc[-1]) if "turnover_z20" in feat and len(feat["turnover_z20"].dropna()) else float("nan")
+    kc = closes.dropna()
+    r20 = float(kc.iloc[-1] / kc.iloc[-21] - 1.0) if len(kc) > 21 else 0.0
+    vol = "缩量" if tz < 0 else "放量"
+    trend = "无趋势" if abs(r20) < 0.08 else ("上行" if r20 > 0 else "下行")
+    hint = ""
+    if tz < 0 and abs(r20) < 0.08:
+        hint = "（保费期：该类制度下银行腿历史贡献偏低——2026-08 至今 -1.7pp；去对冲的代价是趋势月 -14~24pp）"
+    return f"{vol}(成交额z20 {tz:+.2f}) + {trend}(20日 {r20:+.1%}){hint}"
+
+
 BANDS = [("≤-60", -1e9, -60), ("-60~-40", -60, -40), ("-40~-20", -40, -20),
          ("-20~0", -20, 0), ("0~20", 0, 20), ("20~40", 20, 40),
          ("40~60", 40, 60), (">60", 60, 1e9)]
@@ -505,6 +524,8 @@ def main():
             print(f"[轮动调仓] {rot_advice}")
     health_line, ic_now, neg_share = signal_health(score, c)
     print(f"[信号有效性] {health_line}")
+    regime_line = regime_note(feat, c)
+    print(f"[制度提示] {regime_line}")
     # ---------- 输入数据快照（决策点 as-of 实际用到的最新数据 + 数据日期） ----------
     snap = input_snapshot(pit, str(decision))
     print(f"[输入数据] 决策 {decision} 09:30 时点可用（点-in-time 各指标最新一行，精确到分）：")
@@ -561,6 +582,8 @@ def main():
         + f"- 抓取范围 {start} ~ {end}（{tag}），新增 {n_total} 行：{added_str}\n"
         f"- 暂缺 {len(report['gaps'])} 项：{gaps_str}\n"
         f"- 评分序列已刷新：data_real/processed/v9_score.csv（w_flow={args.w_flow:.2f}）\n\n"
+        "## 制度提示\n\n"
+        f"- {regime_line}\n\n"
         "## 信号有效性监控\n\n"
         f"- {health_line}\n"
         "- 参考：2020-2024 样本外 Score 与未来 20 日收益的 IC≈0（分档单调性破裂），"
@@ -584,6 +607,7 @@ def main():
         "",
         "",
         f"【信号有效性】{health_line}",
+        f"【制度提示】{regime_line}",
         "",
         "【输入数据（决策 " + str(decision) + " 09:30 点-in-time 最新可用）】",
     ]
