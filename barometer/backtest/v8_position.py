@@ -138,9 +138,9 @@ def band_dip(score: float, hot: float = 20) -> tuple:
 
 def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
                 rho_up: float = 0.8, rho_down: float = 0.3,
-                add_max: float = 1.5, sell_max: float = 4.0,
+                add_max: float = 2.0, sell_max: float = 5.0,
                 add_max_bull: float = 5.0, lock: bool = True,
-                min_trade: float = 0.03, center: float = 0.85,
+                min_trade: float = 0.05, center: float = 0.85,
                 floor: float = 0.03,
                 cold_pos: float | None = None,
                 dynamic_intraday: bool = False,
@@ -152,20 +152,22 @@ def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
                 sell_ladder: tuple = ((0.02, 0.5), (0.03, 0.5)),
                 buy_ladder: tuple = ((-0.015, 0.5), (-0.025, 0.5), (-0.035, 0.5)),
                 waterfall_sell: tuple = (1.0, 0.02, 0.005, 0.015, 2),
-                waterfall_buy: tuple = (1.5, 0.015, 0.0, 0.02, 1),
+                waterfall_buy: tuple = (2.0, 0.015, 0.0, 0.02, 1),
                 rally_ref: str = "open",
                 init_pos: float = 0.0,
                 crash_trig: float | None = None,
                 crash_qty: float = 0.2,
                 crash_score_hi: float = 60.0,
-                warm_add_max: float | None = 2.0,
-                warm_dscore: float = 10.0) -> pd.DataFrame:
+                warm_add_max: float | None = 3.0,
+                warm_dscore: float = 5.0) -> pd.DataFrame:
     """盘中模式：off=无盘中 / fixed=固定 / dynamic=5档动态 / band=分数分档 / waterfall=2档瀑布(默认)。
     waterfall 卖侧（Score≤band_hot）：冲高2%先减半、再涨0.5%(2.5%)减另一半、从高点回吐1.5%清仓
     ——2026-03+ 窗口 +36.9%/Calmar 6.22，优于单档 band（"少贪一点，少分点档"）。
     买侧同 band：>+20 回落1.5%加1.5成 / ±20 内 1%加0.5成 / <-20 不接飞刀。
     band 单档（>0 不减；≤0 冲2%减1.0成）保留为可选。"""
-    """center=0.85 / ρ_up=0.8 / 加仓步幅1.5成 / 卖仓上限4成 → 2026-03+ 窗口最优。
+    """2026-09-10 调仓扫描后默认：center=0.85 / ρ_up=0.8 / 加仓步幅2成（单日上限）/ 卖仓上限5成 /
+    min_trade 5% / 翻暖首日步幅3成(ΔScore>5) / 瀑布买 2成 → 2026-03+ 轮动 +86.2%/Calmar 7.35
+    （旧参数 +76.1%/6.34）。原注：center=0.85 / ρ_up=0.8 / 加仓步幅1.5成 / 卖仓上限4成 → 2026-03+ 窗口最优。
     floor：极冷环境(Score≤-60)的最低仓位（默认3%；2026-09 实测 17%→3% 全窗口变好，
     只降下限不动其他档）。
     warm_add_max：分数快速翻暖(score>0 且 Δscore>10)时首日加仓步幅放宽到2成

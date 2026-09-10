@@ -59,7 +59,7 @@ def run(score):
     rot = simulate_rotation(o, ho, hc, wf2, np.zeros(n, bool), np.ones(n), fee=5e-4,
                             init_wk=0.0, init_wh=1.0, score=score.reindex(o["date"]).to_numpy(float),
                             waterfall=True, hedge_allow=allow,
-                            emerg_buy=(0.03, 1.0), emerg_sell=(0.035, 2.0))
+                            emerg_buy=(0.04, 1.5), emerg_sell=(0.035, 3.0))
     return det, rot
 
 sn, so = score_of(V9.FLOW_WEIGHTS), score_of(OLD)
@@ -101,7 +101,7 @@ csv = settings.PROCESSED_DIR / "monthly_returns.csv"
 df.to_csv(csv, index=False, encoding="utf-8-sig", float_format="%.6f")
 md_lines = ["# 逐月收益率（连续持仓口径）", "",
             "> 口径：2025-01-01 起一笔资金连续持仓、按自然月切片；数据至 " + o["date"].iloc[-1] + "（2026-09 为未完月）。",
-            "> 轮动 = V9×银行ETF(512800) 默认口径（相关门槛 -0.05 + 紧急动作 3%/1成、3.5%/2成）；",
+            "> 轮动 = V9×银行ETF(512800) 默认口径（相关门槛 -0.05 + 2026-09-10 调仓参数：加仓2成/卖5成/翻暖3成Δ5/紧急买4%1.5成、卖3.5%3成）；",
             "> 轮动(新)/轮动(旧) = 2026-09-10 新权重 vs 2026-09-07 旧权重；现金模型 = V8 waterfall；满仓 = 科创50买入持有（不含费）。", "",
             "| 月份 | 现金模型 | 轮动(新) | 轮动(旧) | 满仓科创50 | 轮动超额 |", "|---|---:|---:|---:|---:|---:|"]
 for _, row in dfp.iterrows():

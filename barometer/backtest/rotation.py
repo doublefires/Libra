@@ -255,8 +255,8 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
                  init_wk: float = 0.0, init_wh: float | None = None,
                  end: str | None = None, waterfall: bool = True,
                  corr_gate: float | None = -0.05,
-                 emerg_buy: tuple | None = (0.03, 1.0),
-                 emerg_sell: tuple | None = (0.035, 2.0)) -> dict:
+                 emerg_buy: tuple | None = (0.04, 1.5),
+                 emerg_sell: tuple | None = (0.035, 3.0)) -> dict:
     """便捷入口：加载科创50+信号+对冲ETF，跑 V9/V8 模型与「模型×对冲」轮动。
     返回 {"model": detail, "rot": rot_df, "kc": ohlc, "hedge_code": code,
           "bank_close": Series}。窗口起点空仓重启（与模型总结口径一致）。
