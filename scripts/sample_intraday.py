@@ -22,7 +22,7 @@ def main():
                 n = append_log(key, iv)
                 total += n
             except Exception as e:  # noqa: BLE001
-                print(f'{key} {iv} fail: {str(e)[:60]}')
+                print(f'{key} {iv} fail: {type(e).__name__}: {str(e)[:120]}')
     print(f'sample_intraday done, +{total} rows')
 
 

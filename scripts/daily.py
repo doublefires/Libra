@@ -285,11 +285,12 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
                              f"现 {c:.3f}（{ts} {src}，vs开盘 {c / s['o'] - 1:+.2%}，"
                              f"雅虎 {s['n']}根）")
         for key in ('brent', 'wti', 'dxy', 'usdjpy'):
-            try:
-                append_log(key, '15m')
-                append_log(key, '60m')
-            except Exception:  # noqa: BLE001
-                pass
+            for iv in ('15m', '60m'):
+                try:
+                    append_log(key, iv)
+                except Exception as e:  # noqa: BLE001
+                    # 落盘失败不能静默：2026-09-09~11 曾因时间列类型不一致连续三天 +0 行而无人发现
+                    lines.append(f'  [分钟落盘] {key} {iv} 失败：{type(e).__name__}: {str(e)[:80]}')
     except Exception:  # noqa: BLE001
         pass
     lines.append('[提示] 下一份开盘决策请于下一交易日 09:00 前运行（服务器 cron 自动执行）')
