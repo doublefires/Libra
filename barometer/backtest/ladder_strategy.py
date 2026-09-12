@@ -20,6 +20,8 @@ import math
 import numpy as np
 import pandas as pd
 
+from barometer.analytics import risk_metrics as _rm
+
 POS_MAX = 0.9
 ADD_MIN, ADD_RANGE = 1.0, 1.5
 SELL_MIN, SELL_RANGE = 2.0, 2.0
@@ -149,8 +151,13 @@ def simulate(ohlc: pd.DataFrame, sig: pd.DataFrame,
     return pd.DataFrame(rows)
 
 
-def metrics(detail: pd.DataFrame, benchmark_close=None) -> dict:
-    """统计指标：年化/回撤/波动/Calmar/平均仓位/胜率/换手。"""
+def metrics(detail: pd.DataFrame, benchmark_close=None,
+            rf_annual: float = 0.0) -> dict:
+    """统计指标：年化/回撤/波动/Calmar/夏普/索提诺/信息比率/平均仓位/换手。
+
+    rf_annual：年化无风险利率（夏普与索提诺共用）；默认 0 = 看绝对风险调整收益。
+    信息比率需要 benchmark_close（用基准日收益算超额与跟踪误差）。
+    """
     eq = detail["equity"].to_numpy()
     ret = np.diff(eq) / eq[:-1]
     days = len(eq)
@@ -166,12 +173,21 @@ def metrics(detail: pd.DataFrame, benchmark_close=None) -> dict:
            "Calmar": calmar, "平均仓位": float(detail["pos"].mean()),
            "换手率": turnover,
            "操作日占比": float(detail["ops"].ne("（无操作）").mean())}
+    # ---- 风险调整收益（2026-09-13 新增：夏普 / 索提诺 / 信息比率）----
+    out["下行波动"] = _rm.downside_deviation(ret, rf_annual)
+    out["夏普"] = _rm.sharpe_ratio(ret, rf_annual)
+    out["索提诺"] = _rm.sortino_ratio(ret, rf_annual)
     if benchmark_close is not None:
         b = np.asarray(benchmark_close, dtype=float) / np.asarray(benchmark_close, dtype=float)[0]
         m = min(len(b), len(eq))
         out["基准累计"] = float(b[m - 1] - 1)
         out["基准年化"] = float(b[m - 1] ** (244 / max(m - 1, 1)) - 1)
         out["基准最大回撤"] = float((b[:m] / np.maximum.accumulate(b[:m]) - 1).min())
+        bench_ret = np.diff(b[:m]) / b[:m - 1]
+        act = _rm.active_returns(ret, bench_ret)
+        out["年化超额"] = float(act.mean() * _rm.PERIODS)
+        out["跟踪误差"] = _rm.tracking_error(ret, bench_ret)
+        out["信息比率"] = _rm.information_ratio(ret, bench_ret)
     return out
 
 

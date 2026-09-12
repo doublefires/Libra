@@ -12,16 +12,33 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from barometer.analytics import risk_metrics as _rm
 from barometer.backtest.v8_position import simulate_v8
 
 
-def perf(eq: pd.Series) -> dict:
-    """累计收益 / 最大回撤 / Calmar(=累计/|回撤|) / 年化波动。"""
+def perf(eq: pd.Series, bench_eq: pd.Series | None = None) -> dict:
+    """累计收益 / 最大回撤 / Calmar(=累计/|回撤|) / 年化波动。
+
+    2026-09-13 新增：夏普 / 索提诺 / 年化超额 / 跟踪误差 / 信息比率
+    （统一按 244 交易日年化，见 barometer.analytics.risk_metrics）。
+    vol 保留原来的 252 口径以免历史报告数字跳变。
+    """
     cum = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
     dd = float((eq / eq.cummax() - 1.0).min())
     cal = cum / abs(dd) if dd < 0 else float("inf")
     vol = float(eq.pct_change().std() * np.sqrt(252))
-    return {"cum": cum, "mdd": dd, "calmar": cal, "vol": vol}
+    ret = _rm.equity_returns(eq.to_numpy(dtype=float))
+    out = {"cum": cum, "mdd": dd, "calmar": cal, "vol": vol,
+           "sharpe": _rm.sharpe_ratio(ret),
+           "sortino": _rm.sortino_ratio(ret),
+           "downside_vol": _rm.downside_deviation(ret),
+           "ann": _rm.annualized_return(ret)}
+    if bench_eq is not None and len(bench_eq) > 2:
+        br = _rm.equity_returns(bench_eq.to_numpy(dtype=float))
+        out["excess_ann"] = float(_rm.active_returns(ret, br).mean() * _rm.PERIODS)
+        out["tracking_error"] = _rm.tracking_error(ret, br)
+        out["info_ratio"] = _rm.information_ratio(ret, br)
+    return out
 
 
 def simulate_rotation(kc: pd.DataFrame, h_open: np.ndarray, h_close: np.ndarray,
