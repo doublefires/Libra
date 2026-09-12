@@ -48,3 +48,20 @@ python -m pytest                         # 95 个测试（点-in-time/T+1/引擎
 
 新浪指数/ETF、中证指数官网（价格+PE+成交额）、CBOE VIX、Yahoo（DXY/^IRX/WTI/BZ=F/JPY=X，带真实 bar 时间戳）、乐咕 PE、akshare（PMI/M1/M2/PPI/工业/Shibor/沪市两融/美国CPI）。
 7 个手工缺口（ETF净申购、涨跌家数、涨停家数等）用 make_manual_template.py 模板补录。
+## 服务器定时任务（cron）
+
+部署在 /root/tech-barometer，日志在 /root/*.log。邮件出口都带 HTTPS_PROXY/HTTP_PROXY=127.0.0.1:7890。
+
+| 时间（北京） | 内容 | 邮件 |
+|---|---|---|
+| `*/15 8-17 * * 1-5` | sample_intraday.py：分钟序列（5m/15m/60m）增量落盘 | 不发 |
+| `0 9 * * 1-5` | daily.py 开盘决策（当日）+ check_unsub + send_mail | 发 |
+| `0 10,12,14 * * 1-5` | daily.py 盘中更新 + send_mail | 发 |
+| `30 14 * * 1-5` | daily.py 盘中更新（尾盘）+ send_mail | 发 |
+| `0 21 * * 0` | daily.py 开盘决策（**下周一**）+ check_unsub + send_mail | 发（周日仅此一封） |
+
+- **周末不发**：周六不跑任何任务；周日只在 21:00 发一封，内容是下一交易日（周一）的开盘决策。
+- 运行模式由 `scripts/daily.py` 的 `is_preopen()` 自动判定：非交易日任意时刻 / 交易日 09:30 前 = 开盘决策模式；
+  交易日 09:30 之后 = 盘中更新模式（只报实时分与数据变化，不做次日决策）。
+- 修改定时任务前先备份：`crontab -l > /tmp/crontab.backup.$(date +%F)`。
+

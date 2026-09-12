@@ -1,5 +1,10 @@
 """每日一条命令：增量抓数据 + 重算评分 + 明天判断（省 token 版）。
 
+运行模式（自动判定，见 is_preopen）：
+  交易日 09:30 前 / 周末任意时刻  -> 开盘决策模式（出目标仓位与调仓建议）
+  交易日 09:30 之后              -> 盘中更新模式（只报实时分与数据变化，不做次日决策）
+  服务器 cron：工作日 09:00 出当日决策；周日 21:00 出「下周一」决策；工作日 10/12/14/14:30 盘中更新。
+
 用法：
   python scripts/daily.py                # 增量更新：从库里最新日期往前 30 天起抓
   python scripts/daily.py --full         # 全量更新（2025-01-01 起）
@@ -307,6 +312,20 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
     print('报告: ' + str(md_f) + '  /  摘要: ' + str(txt_f))
 
 
+def is_preopen(now_bj: pd.Timestamp) -> bool:
+    """是否按「开盘决策」模式运行（对应 cron：交易日 09:00 与周日 21:00）。
+
+    True  = 开盘决策模式：算目标仓位/调仓建议，并落盘 morning_snapshot.json；
+    False = 盘中更新模式：只报实时分与数据变化，不做次日决策。
+
+    判定：非交易日（周末/节假日）任意时刻都是开盘前；交易日则要 09:30 之前。
+    周日 21:00 那次跑的决策日由下面的 BDay 顺延逻辑给出（周一），所以必须走决策模式。
+    """
+    if now_bj.weekday() >= 5:
+        return True
+    return now_bj < pd.Timestamp(f"{now_bj.strftime('%Y-%m-%d')} 09:30")
+
+
 def main():
     ap = argparse.ArgumentParser(description="每日增量更新 + 评分 + 明日判断")
     ap.add_argument("--full", action="store_true", help="全量抓取（否则增量）")
@@ -325,10 +344,9 @@ def main():
     settings.ensure_dirs()
     store = RawStore()
 
-    # 运行模式：交易日 09:30 前 = 开盘决策模式；之后（盘中/收盘后）= 盘中更新模式（不做次日决策）
+    # 运行模式：见 is_preopen()
     now_bj = pd.Timestamp.now()
-    _preopen = (now_bj.weekday() < 5 and
-                now_bj < pd.Timestamp(f"{now_bj.strftime('%Y-%m-%d')} 09:30"))
+    _preopen = is_preopen(now_bj)
 
     # ---------- 1) 增量抓取 ----------
     today = _dt.date.today()
