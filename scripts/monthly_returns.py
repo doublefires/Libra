@@ -82,12 +82,56 @@ for m in months:
     a = r_mod.get(m, np.nan); b = r_new.get(m, np.nan); c = r_old.get(m, np.nan); d = r_bm.get(m, np.nan)
     print("| %s | %+.2f%% | %+.2f%% | %+.2f%% | %+.2f%% | %+.2f%% |" % (m, 100*a, 100*b, 100*c, 100*d, 100*(b-d)))
 print()
+r_map = {"现金模型": r_mod, "轮动(新)": r_new, "轮动(旧)": r_old, "满仓科创50": r_bm}
+series = [("现金模型", mod_eq), ("轮动(新)", rotn_eq), ("轮动(旧)", roto_eq), ("满仓科创50", bm_eq)]
+perf_map = {nm: perf(eq, None if nm == "满仓科创50" else bm_eq) for nm, eq in series}
+
+
+def mstats(rr, ms):
+    v = np.array([rr.get(m, np.nan) for m in ms], float)
+    v = v[~np.isnan(v)]
+    return {"月数": int(len(v)), "上涨月": int((v > 0).sum()), "胜率": float((v > 0).mean()),
+            "平均月": float(v.mean()), "中位月": float(np.median(v)),
+            "最好月": float(v.max()), "最差月": float(v.min()),
+            "月度年化波动": float(v.std(ddof=1) * np.sqrt(12))}
+
+
+stat_map = {nm: mstats(r_map[nm], months) for nm, _ in series}
 for y in ("2025", "2026"):
     ms = [m for m in months if m.startswith(y)]
-    cmp_ = lambda r: np.prod([1 + r.get(m, 0.0) for m in ms]) - 1
+    tot = lambda rr: np.prod([1 + rr.get(m, 0.0) for m in ms]) - 1
     print("%s 合计: 模型 %+.1f%% | 轮动新 %+.1f%% | 轮动旧 %+.1f%% | 满仓 %+.1f%%" %
-          (y, 100*cmp_(r_mod), 100*cmp_(r_new), 100*cmp_(r_old), 100*cmp_(r_bm)))
+          (y, 100 * tot(r_mod), 100 * tot(r_new), 100 * tot(r_old), 100 * tot(r_bm)))
 print()
+
+# ---------------- 月度统计 + 风险调整指标 ----------------
+years_label = "%s ~ %s" % (months[0], months[-1])
+print("=== 月度统计 & 风险调整指标（%s）===" % years_label)
+head = "%-14s" % "指标" + "".join("%14s" % nm for nm, _ in series)
+print(head)
+print("-" * len(head))
+
+
+def line(label, fn, fmt):
+    print("%-14s" % label + "".join("%14s" % fmt(fn(stat_map[nm], perf_map[nm])) for nm, _ in series))
+
+
+line("月胜率", lambda s, p: s["胜率"], lambda v: "%.0f%%" % (100 * v))
+line("上涨/总月数", lambda s, p: s, lambda d: "%d/%d" % (d["上涨月"], d["月数"]))
+line("平均月收益", lambda s, p: s["平均月"], lambda v: "%+.2f%%" % (100 * v))
+line("中位月收益", lambda s, p: s["中位月"], lambda v: "%+.2f%%" % (100 * v))
+line("最好月", lambda s, p: s["最好月"], lambda v: "%+.2f%%" % (100 * v))
+line("最差月", lambda s, p: s["最差月"], lambda v: "%+.2f%%" % (100 * v))
+line("月度年化波动", lambda s, p: s["月度年化波动"], lambda v: "%.1f%%" % (100 * v))
+line("最大回撤", lambda s, p: p["mdd"], lambda v: "%.1f%%" % (100 * v))
+line("Calmar", lambda s, p: p["calmar"], lambda v: "%.2f" % v)
+line("年化波动", lambda s, p: p["vol"], lambda v: "%.1f%%" % (100 * v))
+line("夏普", lambda s, p: p.get("sharpe", float("nan")), lambda v: "%.2f" % v)
+line("索提诺", lambda s, p: p.get("sortino", float("nan")), lambda v: "%.2f" % v)
+line("信息比率", lambda s, p: p.get("info_ratio", float("nan")),
+     lambda v: ("%.2f" % v) if v == v else "—")
+print()
+
 # ---- 落盘 md + csv ----
 rows = []
 for m in months:
@@ -99,23 +143,50 @@ for c in dfp.columns[1:]:
     dfp[c] = (100 * dfp[c]).round(2).map(lambda x: ("%+.2f%%" % x) if x == x else "")
 csv = settings.PROCESSED_DIR / "monthly_returns.csv"
 df.to_csv(csv, index=False, encoding="utf-8-sig", float_format="%.6f")
-md_lines = ["# 逐月收益率（连续持仓口径）", "",
-            "> 口径：2025-01-01 起一笔资金连续持仓、按自然月切片；数据至 " + o["date"].iloc[-1] + "（2026-09 为未完月）。",
-            "> 轮动 = V9×银行ETF(512800) 默认口径（相关门槛 -0.05 + 2026-09-10 调仓参数：加仓2成/卖5成/翻暖3成Δ5/紧急买4%1.5成、卖3.5%3成）；",
-            "> 轮动(新)/轮动(旧) = 2026-09-10 新权重 vs 2026-09-07 旧权重；现金模型 = V8 waterfall；满仓 = 科创50买入持有（不含费）。", "",
-            "| 月份 | 现金模型 | 轮动(新) | 轮动(旧) | 满仓科创50 | 轮动超额 |", "|---|---:|---:|---:|---:|---:|"]
+
+ms26 = [m for m in months if m.startswith("2026")]
+md = ["# 逐月收益率（连续持仓口径）", "",
+      "> 口径：2025-01-01 起一笔资金连续持仓、按自然月切片；数据至 " + o["date"].iloc[-1] +
+      "（%s 为未完月）。" % months[-1],
+      "> 轮动 = V9×银行ETF(512800) 默认口径（相关门槛 -0.05 + 2026-09-10 调仓参数：加仓2成/卖5成/翻暖3成Δ5/紧急买4%1.5成、卖3.5%3成）；",
+      "> 轮动(新)/轮动(旧) = 2026-09-10 新权重 vs 2026-09-07 旧权重；现金模型 = V8 waterfall；满仓 = 科创50买入持有（不含费）。", "",
+      "| 月份 | 现金模型 | 轮动(新) | 轮动(旧) | 满仓科创50 | 轮动超额 |", "|---|---:|---:|---:|---:|---:|"]
 for _, row in dfp.iterrows():
-    md_lines.append("| %s | %s | %s | %s | %s | %s |" % (row["月份"], row["现金模型"], row["轮动_新"], row["轮动_旧"], row["满仓科创50"], row["轮动超额"]))
-ms25 = [m for m in months if m.startswith("2025")]; ms26 = [m for m in months if m.startswith("2026")]
+    md.append("| %s | %s | %s | %s | %s | %s |" % (row["月份"], row["现金模型"], row["轮动_新"],
+                                                   row["轮动_旧"], row["满仓科创50"], row["轮动超额"]))
+ms25 = [m for m in months if m.startswith("2025")]
+
+
 def tot(rr, ms):
     return np.prod([1 + rr.get(m, 0.0) for m in ms]) - 1
-md_lines += ["", "| 合计 | 现金模型 | 轮动(新) | 轮动(旧) | 满仓科创50 |", "|---|---:|---:|---:|---:|",
-             "| 2025 年 | %+.1f%% | %+.1f%% | %+.1f%% | %+.1f%% |" % (100*tot(r_mod, ms25), 100*tot(r_new, ms25), 100*tot(r_old, ms25), 100*tot(r_bm, ms25)),
-             "| 2026 年（至 09-09） | %+.1f%% | %+.1f%% | %+.1f%% | %+.1f%% |" % (100*tot(r_mod, ms26), 100*tot(r_new, ms26), 100*tot(r_old, ms26), 100*tot(r_bm, ms26)),
-             "", "轮动(新) 全期：累计 %+.1f%% / 最大回撤 %.1f%% / Calmar %.2f / 波动 %.1f%%" % (100*perf(rotn_eq)["cum"], 100*perf(rotn_eq)["mdd"], perf(rotn_eq)["calmar"], 100*perf(rotn_eq)["vol"])]
+
+
+md += ["", "| 合计 | 现金模型 | 轮动(新) | 轮动(旧) | 满仓科创50 |", "|---|---:|---:|---:|---:|",
+       "| 2025 年 | %+.1f%% | %+.1f%% | %+.1f%% | %+.1f%% |" % (
+           100 * tot(r_mod, ms25), 100 * tot(r_new, ms25), 100 * tot(r_old, ms25), 100 * tot(r_bm, ms25)),
+       "| 2026 年（至 %s） | %+.1f%% | %+.1f%% | %+.1f%% | %+.1f%% |" % (
+           o["date"].iloc[-1][5:], 100 * tot(r_mod, ms26), 100 * tot(r_new, ms26),
+           100 * tot(r_old, ms26), 100 * tot(r_bm, ms26))]
+md += ["", "## 月度统计与风险调整指标（%s）" % years_label, "",
+       "| 指标 | " + " | ".join(nm for nm, _ in series) + " |",
+       "|---|" + "---:|" * len(series)]
+md.append("| 月胜率 | " + " | ".join("%.0f%%" % (100 * stat_map[nm]["胜率"]) for nm, _ in series) + " |")
+md.append("| 平均月收益 | " + " | ".join("%+.2f%%" % (100 * stat_map[nm]["平均月"]) for nm, _ in series) + " |")
+md.append("| 中位月收益 | " + " | ".join("%+.2f%%" % (100 * stat_map[nm]["中位月"]) for nm, _ in series) + " |")
+md.append("| 最好月 | " + " | ".join("%+.2f%%" % (100 * stat_map[nm]["最好月"]) for nm, _ in series) + " |")
+md.append("| 最差月 | " + " | ".join("%+.2f%%" % (100 * stat_map[nm]["最差月"]) for nm, _ in series) + " |")
+md.append("| 月度年化波动 | " + " | ".join("%.1f%%" % (100 * stat_map[nm]["月度年化波动"]) for nm, _ in series) + " |")
+md.append("| 最大回撤 | " + " | ".join("%.1f%%" % (100 * perf_map[nm]["mdd"]) for nm, _ in series) + " |")
+md.append("| Calmar | " + " | ".join("%.2f" % perf_map[nm]["calmar"] for nm, _ in series) + " |")
+md.append("| 年化波动 | " + " | ".join("%.1f%%" % (100 * perf_map[nm]["vol"]) for nm, _ in series) + " |")
+md.append("| 夏普 | " + " | ".join("%.2f" % perf_map[nm]["sharpe"] for nm, _ in series) + " |")
+md.append("| 索提诺 | " + " | ".join("%.2f" % perf_map[nm]["sortino"] for nm, _ in series) + " |")
+md.append("| 信息比率(对满仓) | " + " | ".join(
+    ("%.2f" % perf_map[nm]["info_ratio"]) if "info_ratio" in perf_map[nm] else "—" for nm, _ in series) + " |")
+md += ["", "> 夏普/索提诺/信息比率口径见 barometer/analytics/risk_metrics.py（年化 244 交易日、rf=0）。",
+       "> 索提诺 > 夏普 = 收益右偏（跌得比涨得少）；信息比率 = 年化超额 / 跟踪误差。"]
 out_md = settings.REPORTS_DIR / "逐月收益率.md"
-out_md.write_text(chr(10).join(md_lines) + chr(10), encoding="utf-8")
+out_md.write_text(chr(10).join(md) + chr(10), encoding="utf-8")
 print("已写:", out_md)
 print("已写:", csv)
-print("轮动(新) 绩效:", {k: (round(v, 3) if isinstance(v, float) else v) for k, v in perf(rotn_eq).items()})
 print("区间: 2025-01-01 ~ %s（%d 个交易日）" % (o["date"].iloc[-1], len(o)))
