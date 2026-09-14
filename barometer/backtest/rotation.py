@@ -273,7 +273,11 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
                  end: str | None = None, waterfall: bool = True,
                  corr_gate: float | None = -0.05,
                  emerg_buy: tuple | None = (0.04, 1.5),
-                 emerg_sell: tuple | None = (0.035, 3.0)) -> dict:
+                 emerg_sell: tuple | None = (0.035, 3.0),
+                 pos_scale: float = 1.0, pos_cap: float = 0.90,
+                 scale_stage: str = "target",
+                 vol_target: float | None = None, vol_window: int = 20,
+                 vol_floor: float = 0.5, vol_ceil: float = 1.5) -> dict:
     """便捷入口：加载科创50+信号+对冲ETF，跑 V9/V8 模型与「模型×对冲」轮动。
     返回 {"model": detail, "rot": rot_df, "kc": ohlc, "hedge_code": code,
           "bank_close": Series}。窗口起点空仓重启（与模型总结口径一致）。
@@ -301,7 +305,10 @@ def run_rotation(store, start: str = "2025-01-01", hedge_code: str = "512800",
     if end:
         s = s[s["date"] <= end]
     det = simulate_v8(o, s, fee=fee, lock=True, center=0.85, floor=0.03,
-                      intraday_mode="waterfall", init_pos=init_wk)
+                      intraday_mode="waterfall", init_pos=init_wk,
+                      pos_scale=pos_scale, pos_cap=pos_cap, scale_stage=scale_stage,
+                      vol_target=vol_target, vol_window=vol_window,
+                      vol_floor=vol_floor, vol_ceil=vol_ceil)
     pos = det.set_index("date")["pos"].reindex(o["date"])
     pos_prev = pos.shift(1)
     hdf = pd.read_csv(settings.RAW_DIR / "etfs" / f"{hedge_code}.csv")

@@ -136,6 +136,23 @@ def band_dip(score: float, hot: float = 20) -> tuple:
     return None, 0.0
 
 
+def realized_vol_annualized(closes: np.ndarray, i: int,
+                             window: int = 20, periods: int = 244) -> float:
+    """第 i 日开盘前可用的已实现波动（年化）。
+
+    PIT：只用 closes[i-window-1 .. i-1]，**不含当日**，因为仓位是在当日开盘定的。
+    样本不足返回 nan。
+    """
+    if i < window + 1:
+        return float("nan")
+    seg = np.asarray(closes[i - window - 1:i], dtype=float)
+    if len(seg) < window + 1 or not np.isfinite(seg).all() or (seg <= 0).any():
+        return float("nan")
+    r = np.diff(seg) / seg[:-1]
+    sd = float(r.std(ddof=1))
+    return sd * np.sqrt(periods) if np.isfinite(sd) else float("nan")
+
+
 def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
                 rho_up: float = 0.8, rho_down: float = 0.3,
                 add_max: float = 2.0, sell_max: float = 5.0,
@@ -159,7 +176,14 @@ def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
                 crash_qty: float = 0.2,
                 crash_score_hi: float = 60.0,
                 warm_add_max: float | None = 3.0,
-                warm_dscore: float = 5.0) -> pd.DataFrame:
+                warm_dscore: float = 5.0,
+                pos_scale: float = 1.0,
+                pos_cap: float = 0.90,
+                scale_stage: str = "target",
+                vol_target: float | None = None,
+                vol_window: int = 20,
+                vol_floor: float = 0.5,
+                vol_ceil: float = 1.5) -> pd.DataFrame:
     """盘中模式：off=无盘中 / fixed=固定 / dynamic=5档动态 / band=分数分档 / waterfall=2档瀑布(默认)。
     waterfall 卖侧（Score≤band_hot）：冲高2%先减半、再涨0.5%(2.5%)减另一半、从高点回吐1.5%清仓
     ——2026-03+ 窗口 +36.9%/Calmar 6.22，优于单档 band（"少贪一点，少分点档"）。
@@ -219,6 +243,19 @@ def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
                                   cold_pos=cold_pos)
             bull_accel = max(0.0, bull - base_score_v8(score, center=center, floor=floor,
                                                        cold_pos=cold_pos))
+            # ---- 仓位叠加层（2026-09-13 新增，默认全关=原行为）----
+            # ① 波动率目标：低波动期放大、高波动期收缩（k 截断在 [vol_floor, vol_ceil]）
+            # ② 暴露放大：pos_scale 对"分数决定的目标仓位"整体上移，再按 pos_cap 封顶
+            if vol_target is not None:
+                _rv = realized_vol_annualized(closes, i, vol_window)
+                if np.isfinite(_rv) and _rv > 1e-6:
+                    tgt = tgt * float(np.clip(vol_target / _rv, vol_floor, vol_ceil))
+            # scale_stage="target"  : 放大"分数决定的目标"，再经平滑/盘中规则（放大被规则部分吸收）
+            # scale_stage="smoothed": 放大"平滑后的目标"，等价于整体多拿一点仓（更接近路径缩放）
+            if scale_stage == "target":
+                tgt = float(np.clip(tgt * pos_scale, 0.0, pos_cap))
+            else:
+                tgt = float(np.clip(tgt, 0.0, pos_cap))
             # 非对称平滑
             flip = 0
             if (score < -30 and rec.get("flip", 0) == 1):
@@ -232,6 +269,8 @@ def simulate_v8(ohlc: pd.DataFrame, sig: pd.DataFrame, fee: float = 0.0005,
             else:
                 rho = rho_down
             tgt_sm = (1 - rho) * pos_open + rho * tgt
+            if scale_stage == "smoothed":
+                tgt_sm = float(np.clip(tgt_sm * pos_scale, 0.0, pos_cap))
             order = tgt_sm - pos_open
             if order > 1e-4:
                 am = add_max_bull if bull_accel > 0.10 else add_max
