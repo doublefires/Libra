@@ -118,8 +118,34 @@ def main():
     ap.add_argument("--to", type=str, default=None, help="收件邮箱（覆盖配置）")
     ap.add_argument("--attach", type=str, default=None, nargs="*",
                     help="附加 outputs_real 下的文件（如 comparison_2y_v8.png）")
+    ap.add_argument("--intraday-gate", action="store_true",
+                    help="盘中报告专用：与早间宏观数据差距不大则跳过发送（读 intraday_gate.json）")
     args = ap.parse_args()
     settings.ensure_dirs()
+
+    # ---- 盘中发送门槛（2026-09-14）----
+    # cron: daily.py ... && send_mail.py --intraday-gate
+    # daily.py 在每个盘中报告末尾写 intraday_gate.json；material=false 就直接不发。
+    # 门控文件缺失/损坏时**不发**（宁可不发，也别把重复推送发出去）。
+    if args.intraday_gate:
+        gate = settings.PROCESSED_DIR / "intraday_gate.json"
+        ok = False
+        if gate.exists():
+            try:
+                g = json.loads(gate.read_text(encoding="utf-8"))
+                ok = bool(g.get("material"))
+                det = "；".join(g.get("reasons") or []) or "无明细"
+                print("[盘中门槛] %s 实时分 %+.1f → %s%s" % (
+                    g.get("time", "?"), float(g.get("score") or 0.0),
+                    "发送" if ok else "与早间差距不大，跳过发送", ("（" + det + "）") if ok else ""))
+            except Exception as e:  # noqa: BLE001
+                print("[盘中门槛] 门控文件读取失败(%s)，保守起见跳过发送" % e)
+                return
+        else:
+            print("[盘中门槛] 未找到 %s（daily.py 未跑成功？），跳过发送" % gate)
+            return
+        if not ok:
+            return
 
     cfg = load_config()
     if cfg is None:

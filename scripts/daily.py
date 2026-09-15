@@ -202,6 +202,85 @@ def signal_health(score: pd.Series, closes: pd.Series, look: int = 60,
     return line, ic_now, neg_share
 
 
+# ---- 盘中邮件发送门槛（2026-09-14）----
+# 用户要求：盘中报告与早间宏观数据差距不大就不发邮件，省掉无信息量的推送。
+# 快变量用"相对/绝对变动阈值"；慢变量（日频/月频）只有出现"新的数据日"才算重大。
+GATE_PATH = settings.PROCESSED_DIR / 'intraday_gate.json'
+# 每类指标的触发规则 (模式, 阈值)：
+#   'rel'    相对变动（|Δ|/|早间值|）
+#   'abs'    绝对变动（利率类，单位 %）
+#   'newday' 出现新的 data_date（月频数据：新一期公布本身就是重大信息）
+GATE_RULES = {
+    'brent': ('rel', 0.010),          # 油价最敏感：日间 1% 即发
+    'wti': ('rel', 0.010),
+    'dxy': ('rel', 0.003),            # 美元指数 0.3%
+    'usdjpy': ('rel', 0.003),         # USDJPY 0.3%
+    'vix': ('rel', 0.050),
+    'sox': ('rel', 0.010),
+    'us10y_rate': ('abs', 0.03),      # 美债10Y：3bp
+    'us_short_rate': ('abs', 0.03),   # 短端：3bp
+    'dr007': ('abs', 0.03),           # DR007：3bp（否则每天 11:30 出个新值就发，太吵）
+    'turnover': ('rel', 0.01),        # 成交额 1%
+    'margin_balance': ('rel', 0.01),
+    'pe_kc50': ('rel', 0.01),
+    'realized_vol': ('rel', 0.01),
+    'us_cpi_yoy': ('newday', 0),      # 月频：新一期公布必发
+    'us_ppi_yoy': ('newday', 0),
+    'us_ppi_mom': ('newday', 0),
+}
+DEFAULT_RULE = ('newday', 0)          # 未列出的指标：新数据日才触发
+SCORE_THRESH = 10.0                   # 实时分较早间变动 10 分
+
+
+def intraday_materiality(mor: dict | None, snap: list, live: dict,
+                         s_now: float) -> tuple:
+    """盘中报告是否"值得发一封邮件"。
+
+    返回 (material: bool, reasons: list[str], moves: dict)
+    规则（全部按"数值真的变了多少"判断，不看发布时点）：
+      1) |ΔScore| >= SCORE_THRESH                           → 发
+      2) 指标变动超过 GATE_RULES 阈值（油价最敏感 1%；利率 3bp）→ 发
+      3) 月频指标（CPI/PPI）出现新一期数据                   → 发
+      4) 早间没有的新指标                                    → 发
+      5) 无早间基准（首次运行/快照被删）                      → 发（不静默）
+    """
+    mor_inds = (mor or {}).get('indicators', {})
+    moves: dict = {}
+    reasons: list = []
+    if not mor_inds:
+        return True, ['无早间基准，无法比较'], moves
+    mor_score = (mor or {}).get('score')
+    if mor_score is not None:
+        ds = float(s_now) - float(mor_score)
+        moves['score'] = ds
+        if abs(ds) >= SCORE_THRESH:
+            reasons.append('实时分 %+.1f（阈值 %.0f）' % (ds, SCORE_THRESH))
+    for nm, iid, dd, rel, v in snap:
+        m = mor_inds.get(iid)
+        lq = live.get(iid)
+        cdd, crel, cv = (lq[0], lq[1], lq[2]) if (lq and lq[1] > rel) else (dd, rel, float(v))
+        if not m:
+            reasons.append('新增指标 %s' % nm)
+            continue
+        mdd, mv = m.get('dd'), float(m.get('value'))
+        mode, thr = GATE_RULES.get(iid, DEFAULT_RULE)
+        if mode == 'newday':
+            if cdd != mdd:
+                reasons.append('%s 新一期数据 %s = %s' % (nm, cdd, ('%.3f' % cv)))
+            continue
+        if mode == 'abs':
+            d = cv - mv
+            moves[iid] = d
+            if abs(d) >= thr:
+                reasons.append('%s %+.3f（阈值 %.3f）' % (nm, d, thr))
+        else:
+            move = (cv - mv) / abs(mv) if mv else 0.0
+            moves[iid] = move
+            if abs(move) >= thr:
+                reasons.append('%s %+.2f%%（阈值 %.1f%%）' % (nm, 100 * move, 100 * thr))
+    return (len(reasons) > 0), reasons, moves
+
+
 def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
                      dscore: float, flow_s: float, trend_s: float, pit,
                      decision, data_latest: str) -> None:
@@ -264,6 +343,10 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
             upd_cnt += 1
             lines.append(f'  {nm}：早间无 → 当前{tag} {dd} {rel} = {v:,.3f} ★新')
     lines.append(f'[说明] 新增/更新 {upd_cnt} 项；本次抓取新增 {n_total} 行，数据最新 {data_latest}{err_line}')
+    # ---- 发送判断：与早间差距不大就不发这封盘中邮件 ----
+    material, reasons, moves = intraday_materiality(mor, snap, live, s_now)
+    lines.append('[发送判断] ' + ('发邮件 —— ' + '；'.join(reasons) if material
+                                  else '与早间差距不大 → 本次不发邮件'))
     # ---- 日内分钟行情（雅虎分时 + 新浪实时互为备份，现价取两者中较新者） ----
     nmap = {'brent': '布伦特', 'wti': 'WTI', 'dxy': '美元指数', 'usdjpy': 'USDJPY'}
     lines.append('')
@@ -309,6 +392,14 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
     md_note = '> 非开盘前运行：不做次日决策。实时分与数据反映生成时刻，仅供盘中参考。'
     md_f.write_text(md_head + NL + NL + md_note + NL + NL + '```' + NL + body + '```' + NL,
                     encoding='utf-8')
+    try:
+        GATE_PATH.write_text(json.dumps({
+            'time': f'{today} {hhmm}', 'decision': str(decision),
+            'score': float(s_now), 'material': bool(material),
+            'reasons': reasons, 'moves': moves,
+        }, ensure_ascii=False, indent=1), encoding='utf-8')
+    except Exception:  # noqa: BLE001
+        pass
     print('报告: ' + str(md_f) + '  /  摘要: ' + str(txt_f))
 
 
