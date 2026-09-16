@@ -24,7 +24,7 @@ from email.header import Header
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -104,6 +104,15 @@ def build_mime(subject: str, body: str,
     msg = MIMEMultipart()
     if from_addr:
         msg["From"] = formataddr((str(Header("Libra", "utf-8")), from_addr))
+        # ---- 投递卫生（2026-09-15 hotmail 550 之后补）----
+        # 微软对 qq.com 这类消费级域名要求"更高的认证级别"，SPF/DKIM 之外再补齐
+        # Date / Message-ID / Reply-To / List-Unsubscribe，并让每封邮件的 Message-ID 唯一，
+        # 避免"一天多封几乎相同内容"被判为批量垃圾邮件。
+        msg["Reply-To"] = from_addr
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain=from_addr.split("@")[-1])
+        msg["List-Unsubscribe"] = "<mailto:%s?subject=unsubscribe>" % from_addr
+        msg["X-Mailer"] = "Libra"
     msg["Subject"] = str(Header(subject, "utf-8"))
     msg.attach(MIMEText(body, "plain", "utf-8"))
     for name, data in (attachments or []):
@@ -206,8 +215,24 @@ def main():
         s.starttls()
     try:
         s.login(cfg["sender"], cfg["auth_code"])
-        s.sendmail(cfg["sender"], to_list, msg.as_string())
-        print(f"已发送: {subject} -> {', '.join(to_list)}（附件 {len(atts)} 个）")
+        # 逐收件人单独发：一个地址被拒不会牵连另一个；且每封的 Message-ID / To 都不同，
+        # 降低"同一封信群发"的垃圾评分。
+        ok, bad = [], []
+        for rcpt in to_list:
+            one = build_mime(subject, body, atts, from_addr=cfg["sender"])
+            one["To"] = rcpt
+            try:
+                refused = s.sendmail(cfg["sender"], [rcpt], one.as_string())
+                (bad.append((rcpt, refused)) if refused else ok.append(rcpt))
+            except Exception as e:  # noqa: BLE001
+                bad.append((rcpt, "%s: %s" % (type(e).__name__, e)))
+        print(f"已发送: {subject} -> {', '.join(ok)}（附件 {len(atts)} 个）" if ok else
+              f"未发送成功: {subject}")
+        for rcpt, why in bad:
+            print(f"  [发送失败] {rcpt}: {why}")
+        if bad:
+            print("  ⚠ 注意：QQ 对异步退信（如微软 550 5.7.515）不会在这里报错，"
+                  "请用 python scripts/check_bounce.py 查收件箱退信。")
     finally:
         s.quit()
 
