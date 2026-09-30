@@ -28,6 +28,30 @@ def test_build_mime_with_attachment():
     assert msg2.get_payload()[1].get_filename() is not None
 
 
+def test_recently_sent_guard(tmp_path):
+    """重复发送保护：状态文件里记着同一天 → 判定为已发过；缺失/损坏 → 当作没发过。"""
+    from scripts.send_mail import recently_sent
+    f = tmp_path / ".last_sent.json"
+    assert recently_sent(f, "2026-10-08") is False        # 文件不存在
+    f.write_text('{"date": "2026-10-08"}', encoding="utf-8")
+    assert recently_sent(f, "2026-10-08") is True
+    assert recently_sent(f, "2026-10-09") is False
+    f.write_text("{坏文件", encoding="utf-8")
+    assert recently_sent(f, "2026-10-08") is False
+
+
+def test_marked_closed_guard(tmp_path):
+    """休市标记：只有标记日期 == 今天才拦；昨天/损坏的标记不拦。"""
+    from scripts.send_mail import marked_closed
+    f = tmp_path / "market_closed.json"
+    assert marked_closed(f, "2026-10-01") is False       # 文件不存在
+    f.write_text('{"date": "2026-10-01", "reason": "holiday"}', encoding="utf-8")
+    assert marked_closed(f, "2026-10-01") is True
+    assert marked_closed(f, "2026-10-08") is False       # 隔了一天就失效
+    f.write_text("{坏文件", encoding="utf-8")
+    assert marked_closed(f, "2026-10-01") is False
+
+
 def test_parse_recipients():
     from scripts.send_mail import parse_recipients
     assert parse_recipients("a@qq.com, b@163.com") == ["a@qq.com", "b@163.com"]

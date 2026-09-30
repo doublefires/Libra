@@ -96,6 +96,22 @@ def parse_recipients(raw) -> list:
     return [str(x).strip() for x in raw if str(x).strip()]
 
 
+def recently_sent(state_path, date_part: str) -> bool:
+    """该日期的日报是否已经成功发送过（读状态文件；不存在/损坏一律当作没发过）。"""
+    try:
+        return json.loads(Path(state_path).read_text(encoding="utf-8")).get("date") == date_part
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def marked_closed(state_path, day: str) -> bool:
+    """daily.py 是否已把「今天是休市日」写进标记文件（写的是同一天才算）。"""
+    try:
+        return json.loads(Path(state_path).read_text(encoding="utf-8")).get("date") == day
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def build_mime(subject: str, body: str,
                attachments: list[tuple[str, bytes]] | None = None,
                from_addr: str | None = None) -> MIMEMultipart:
@@ -129,6 +145,8 @@ def main():
                     help="附加 outputs_real 下的文件（如 comparison_2y_v8.png）")
     ap.add_argument("--intraday-gate", action="store_true",
                     help="盘中报告专用：与早间宏观数据差距不大则跳过发送（读 intraday_gate.json）")
+    ap.add_argument("--force-send", action="store_true",
+                    help="忽略「该日期日报已发送过」的记录，强制再发一次")
     args = ap.parse_args()
     settings.ensure_dirs()
 
@@ -182,6 +200,21 @@ def main():
     date_part = m.group(0) if m else _dt.date.today().strftime("%Y-%m-%d")
     subject = cfg.get("subject_prefix", "[Libra] ") + date_part + " Libra 日报"
 
+    # ---- 重复发送保护（2026-09-30）----
+    # 早间 cron 每天都会调本脚本。若 daily.py 因休市/抓取失败没生成新报告，
+    # 报告文件还是上一份 → 这里会重复推送同一封（hotmail 曾因「一天多封雷同」判垃圾）。
+    # 用状态文件记「上一份已成功发出的日报日期」，只对早间/决策路径生效（盘中另有门槛）。
+    sent_state = settings.REPORTS_DIR / ".last_sent.json"
+    closed_state = settings.PROCESSED_DIR / "market_closed.json"
+    if not args.intraday_gate and not args.force_send and marked_closed(
+            closed_state, _dt.date.today().strftime("%Y-%m-%d")):
+        print("[跳过] 今日休市（法定节假日），日报未更新，本次不发送。")
+        return
+    if not args.intraday_gate and not args.force_send:
+        if recently_sent(sent_state, date_part):
+            print(f"[跳过] {date_part} 的日报已经发送过，报告未更新，本次不重复发送（--force-send 可强制）。")
+            return
+
     atts: list[tuple[str, bytes]] = []
     if cfg.get("attach_md", True) and md.exists():
         atts.append((md.name, md.read_bytes()))
@@ -228,6 +261,14 @@ def main():
                 bad.append((rcpt, "%s: %s" % (type(e).__name__, e)))
         print(f"已发送: {subject} -> {', '.join(ok)}（附件 {len(atts)} 个）" if ok else
               f"未发送成功: {subject}")
+        if ok and not args.intraday_gate:
+            try:
+                sent_state.write_text(json.dumps(
+                    {"date": date_part,
+                     "time": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     "to": ok}, ensure_ascii=False, indent=1), encoding="utf-8")
+            except Exception:  # noqa: BLE001  状态写失败不影响已发出的邮件
+                pass
         for rcpt, why in bad:
             print(f"  [发送失败] {rcpt}: {why}")
         if bad:

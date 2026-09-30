@@ -8,4 +8,5 @@
   point_in_time      as-of 视图（PointInTime），任意时点市场已知的数据快照
 """
 from barometer.timeline.point_in_time import PointInTime  # noqa: F401
-from barometer.timeline.trading_calendar import TradingCalendar, load_trading_calendar  # noqa: F401
+from barometer.timeline.trading_calendar import (  # noqa: F401
+    TradingCalendar, load_trade_dates, load_trading_calendar, next_open_day)

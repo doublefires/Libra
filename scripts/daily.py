@@ -4,6 +4,8 @@
   交易日 09:30 前 / 周末任意时刻  -> 开盘决策模式（出目标仓位与调仓建议）
   交易日 09:30 之后              -> 盘中更新模式（只报实时分与数据变化，不做次日决策）
   服务器 cron：工作日 09:00 出当日决策；周日 21:00 出「下周一」决策；工作日 10/12/14/14:30 盘中更新。
+  --force-decision 可强制走开盘决策模式（收盘后补一份完整日报、节假日补做）。
+  周末以外的**休市日（法定节假日）直接跳过**，不生成也不推送重复日报。
 
 用法：
   python scripts/daily.py                # 增量更新：从库里最新日期往前 30 天起抓
@@ -44,7 +46,8 @@ from barometer.scoring.v3 import V3Scorer  # noqa: E402
 from barometer.scoring.v9 import (FLOW_WEIGHTS, TREND_SIGNS,  # noqa: E402
                                   build_features, fixed_blend_score,
                                   macro_flow_score, trend_core_raw)
-from barometer.timeline import TradingCalendar, load_trading_calendar  # noqa: E402
+from barometer.timeline import (TradingCalendar, load_trade_dates,  # noqa: E402
+                                load_trading_calendar, next_open_day)
 from barometer.timeline.point_in_time import PointInTime  # noqa: E402
 
 LOOKBACK_DAYS = 30
@@ -403,15 +406,18 @@ def _intraday_report(added: dict, report: dict, fetch_err, s_now: float,
     print('报告: ' + str(md_f) + '  /  摘要: ' + str(txt_f))
 
 
-def is_preopen(now_bj: pd.Timestamp) -> bool:
+def is_preopen(now_bj: pd.Timestamp, force: bool = False) -> bool:
     """是否按「开盘决策」模式运行（对应 cron：交易日 09:00 与周日 21:00）。
 
     True  = 开盘决策模式：算目标仓位/调仓建议，并落盘 morning_snapshot.json；
     False = 盘中更新模式：只报实时分与数据变化，不做次日决策。
 
-    判定：非交易日（周末/节假日）任意时刻都是开盘前；交易日则要 09:30 之前。
-    周日 21:00 那次跑的决策日由下面的 BDay 顺延逻辑给出（周一），所以必须走决策模式。
+    判定：周末任意时刻都是开盘前；交易日则要 09:30 之前。
+    周日 21:00 那次跑的决策日由下面的交易日历顺延逻辑给出（周一），所以必须走决策模式。
+    force=True（--force-decision）时无条件走决策模式，用于收盘后补出完整日报。
     """
+    if force:
+        return True
     if now_bj.weekday() >= 5:
         return True
     return now_bj < pd.Timestamp(f"{now_bj.strftime('%Y-%m-%d')} 09:30")
@@ -431,13 +437,31 @@ def main():
                     help="跟踪标的（idx_kc50=科创50 / idx_cyb=创业板指 / idx_kczs=科创综指）")
     ap.add_argument("--hedge", type=str, default=None,
                     help="轮动对冲ETF代码（如 512800 银行ETF）：输出 V9×对冲 双标的建议与回测")
+    ap.add_argument("--force-decision", action="store_true",
+                    help="强制出「开盘决策」完整日报（收盘后补做/节假日补做）；默认按运行时刻自动判定")
     args = ap.parse_args()
     settings.ensure_dirs()
     store = RawStore()
 
     # 运行模式：见 is_preopen()
     now_bj = pd.Timestamp.now()
-    _preopen = is_preopen(now_bj)
+    _preopen = is_preopen(now_bj, force=args.force_decision)
+
+    # ---------- 0) 休市日直接跳过（避免假日 cron 反复推同一份日报） ----------
+    # 数据源：akshare 全量交易日历（含节假日，本地缓存）。拿不到日历时不作判断，退化为旧行为。
+    trade_dates = load_trade_dates()
+    _today_s = now_bj.strftime("%Y-%m-%d")
+    if trade_dates and not args.force_decision and now_bj.weekday() < 5 \
+            and _today_s not in set(trade_dates):
+        print(f"[休市] {_today_s} 非交易日（法定节假日休市），本次不生成日报。")
+        print("[休市] 如需强制生成，加 --force-decision。")
+        try:  # 给 send_mail 留标记：报告没更新，别把上一份重复推一遍
+            (settings.PROCESSED_DIR / "market_closed.json").write_text(
+                json.dumps({"date": _today_s, "reason": "holiday"}, ensure_ascii=False),
+                encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        return
 
     # ---------- 1) 增量抓取 ----------
     today = _dt.date.today()
@@ -503,17 +527,32 @@ def main():
     cal_dates = list(bm_dates)
     if last_data is not None:
         now_bj = pd.Timestamp.now()
-        dec = last_data + pd.tseries.offsets.BDay(1)
-        guard = 0
-        while pd.Timestamp(f"{dec.strftime('%Y-%m-%d')} 09:30") <= now_bj and guard < 12:
-            dec = dec + pd.tseries.offsets.BDay(1)   # 该日开盘已过 → 顺延到下一个开盘日
-            guard += 1
+        last_s = last_data.strftime("%Y-%m-%d")
+        # 决策日 = 运行时刻之后最近的一个 A 股开盘日。
+        # 优先用 akshare 交易日历（认节假日：如 2026-10-01~10-07 休市 → 决策日 10-08），
+        # 拿不到日历时退回「工作日」推算（不含节假日，仅离线兜底）。
+        dec = None
+        dec_s = next_open_day(trade_dates, last_s, now_bj) if trade_dates else None
+        if dec_s:
+            dec = pd.Timestamp(dec_s)
+        else:
+            dec = last_data + pd.tseries.offsets.BDay(1)
+            guard = 0
+            while pd.Timestamp(f"{dec.strftime('%Y-%m-%d')} 09:30") <= now_bj and guard < 12:
+                dec = dec + pd.tseries.offsets.BDay(1)   # 该日开盘已过 → 顺延到下一个开盘日
+                guard += 1
         decision = dec.date()
-        t = last_data + pd.tseries.offsets.BDay(1)
-        while t <= dec:                               # 中间交易日也补进日历（评分轴连续）
-            if t.strftime("%Y-%m-%d") not in cal_dates:
-                cal_dates.append(t.strftime("%Y-%m-%d"))
-            t = t + pd.tseries.offsets.BDay(1)
+        dec_s = decision.strftime("%Y-%m-%d")
+        # 把 last_data 与决策日之间的交易日补进日历（评分轴连续）
+        span = [x for x in (trade_dates or []) if last_s < x <= dec_s]
+        if not span:                                  # 无日历时用工作日兜底
+            t = last_data + pd.tseries.offsets.BDay(1)
+            while t <= dec:
+                span.append(t.strftime("%Y-%m-%d"))
+                t = t + pd.tseries.offsets.BDay(1)
+        for x in span:
+            if x not in cal_dates:
+                cal_dates.append(x)
     TradingCalendar(cal_dates).save_cache()
     cal = load_trading_calendar(pit)
     hs = HeatScorer(pit, cal)
@@ -656,9 +695,14 @@ def main():
     # ---------- 报告文件 ----------
     md = settings.REPORTS_DIR / "daily_latest.md"
     txt = settings.REPORTS_DIR / "daily_latest.txt"
-    fp = sorted(((n, w * float(feat[n].iloc[-1])) for n, w in FLOW_WEIGHTS.items()
+    def _z(x) -> float:
+        """断更/无波动指标的 z 是 NaN，评分里按 0 中性化；归因表也显示 0.00（不再出现 +nan）。"""
+        x = float(x)
+        return 0.0 if x != x else x
+
+    fp = sorted(((n, w * _z(feat[n].iloc[-1])) for n, w in FLOW_WEIGHTS.items()
                  if n in feat), key=lambda x: x[1])
-    tp = sorted(((n, sgn * float(feat[n].iloc[-1]) / 5.0) for n, sgn in TREND_SIGNS.items()
+    tp = sorted(((n, sgn * _z(feat[n].iloc[-1]) / 5.0) for n, sgn in TREND_SIGNS.items()
                  if n in feat), key=lambda x: x[1])
     flow_lines = "\n".join(f"| {n} | {v:+.2f} |" for n, v in fp)
     trend_lines = "\n".join(f"| {n} | {v:+.2f} |" for n, v in tp)
@@ -683,6 +727,7 @@ def main():
         "| 指标 | 贡献 |\n|---|---|\n" + flow_lines + "\n\n"
         "趋势核心贡献（z/5）：\n\n"
         "| 指标 | 贡献 |\n|---|---|\n" + trend_lines + "\n\n"
+        "（断更/无波动指标 z=NaN，评分按 0 中性化，表中即 0.00）\n\n"
         + snap_md
         + "## 2026-03+ 回测至今\n\n"
         f"- {win_str}\n"

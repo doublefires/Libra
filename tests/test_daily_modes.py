@@ -23,6 +23,13 @@ def test_intraday_weekday_after_open():
     assert daily.is_preopen(pd.Timestamp("2026-09-11 23:00")) is False
 
 
+def test_force_decision_overrides_intraday():
+    """--force-decision：收盘后也强制出完整日报（发信给决策日，而不是盘中更新）。"""
+    assert daily.is_preopen(pd.Timestamp("2026-09-11 13:16"), force=True) is True
+    assert daily.is_preopen(pd.Timestamp("2026-09-30 18:46"), force=True) is True
+    assert daily.is_preopen(pd.Timestamp("2026-09-11 13:16"), force=False) is False
+
+
 def test_weekend_is_always_preopen():
     """周六全天 + 周日 21:00（新增的发信时点）都必须出决策。"""
     assert daily.is_preopen(pd.Timestamp("2026-09-12 09:00")) is True     # 周六

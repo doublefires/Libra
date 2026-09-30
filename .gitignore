@@ -22,6 +22,14 @@ mail_config.json
 # 每日自动生成的早间基准（盘中对比用，9点cron每日覆写）
 data_real/processed/morning_snapshot.json
 data_real/processed/intraday/
+# akshare 全量交易日历缓存（含节假日，供 daily.py 判休市/定决策日）
+data_real/processed/trade_dates.csv
+# 日报「已发送」状态（防重复推送）
+outputs_real/reports/.last_sent.json
+# 休市标记（由 daily.py 写、send_mail.py 读）
+data_real/processed/market_closed.json
+# 盘中发信门槛（daily.py 写、send_mail.py --intraday-gate 读）
+data_real/processed/intraday_gate.json
 
 # ---------- 缓存与临时 ----------
 .cache/

@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from config import settings
@@ -83,3 +85,49 @@ def load_trading_calendar(pit=None) -> TradingCalendar:
     cal = TradingCalendar(pd.bdate_range(settings.CALENDAR_START, settings.CALENDAR_END))
     cal.save_cache()
     return cal
+
+
+def load_trade_dates(max_age_days: int = 5, cache_path=None) -> list:
+    """全量 A 股交易日历（含**未来已公布**的日期），用来识别节假日。
+
+    来源 akshare「新浪交易日历」接口；本地缓存 max_age_days 天，避免每次运行都请求网络。
+    任何失败都返回 []（调用方回退到「工作日」推算），绝不抛异常。
+    akshare 日历只覆盖到当年年末，跨年后缓存过期会自动重抓。
+    """
+    path = Path(cache_path) if cache_path else (settings.PROCESSED_DIR / "trade_dates.csv")
+    cached: list = []
+    try:
+        if path.exists():
+            df = pd.read_csv(path)
+            cached = sorted(str(x) for x in df["date"].tolist())
+            ts = pd.Timestamp(str(df["fetched_at"].iloc[0])[:19])
+            if (pd.Timestamp.now() - ts) < pd.Timedelta(days=max_age_days):
+                return cached
+    except Exception:  # noqa: BLE001  缓存坏了就当没有
+        cached = []
+    try:
+        import akshare as ak
+        raw = ak.tool_trade_date_hist_sina()
+        dates = sorted(pd.to_datetime(raw["trade_date"]).dt.strftime("%Y-%m-%d").tolist())
+        if dates:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame({"date": dates,
+                          "fetched_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}
+                         ).to_csv(path, index=False)
+            return dates
+    except Exception:  # noqa: BLE001  网络失败 → 用过期缓存
+        pass
+    return cached
+
+
+def next_open_day(trade_dates, after, now, cutoff: str = "09:30"):
+    """trade_dates 里第一个「晚于 after 且开盘时刻还没到」的交易日；找不到返回 None。
+
+    纯函数（好测）：open 日 = 该日 cutoff 之前必须已经到达运行时刻，否则就要再往后顺延。
+    """
+    after_s = str(after)[:10]
+    now_ts = pd.Timestamp(now)
+    for x in sorted(str(d)[:10] for d in (trade_dates or [])):
+        if x > after_s and pd.Timestamp(f"{x} {cutoff}") > now_ts:
+            return x
+    return None
