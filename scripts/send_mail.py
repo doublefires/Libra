@@ -104,6 +104,36 @@ def recently_sent(state_path, date_part: str) -> bool:
         return False
 
 
+def intraday_gate_decision(gate_path, closed_path, today: str) -> tuple:
+    """盘中发信门槛（纯函数，便于测试）：返回 (是否发送, 说明文字)。
+
+    宁可漏发，不可重复推 —— 2026-10-01（国庆休市）当天，盘中那几次 cron 拿着
+    上一交易日留下的 material=true 旧门槛，把 09-30 的报告连发了 10:00/12:00 两封。
+    判定顺序：
+      1) daily.py 已标记「今天休市」             → 不发
+      2) 门槛文件不存在（daily.py 没跑成功）      → 不发
+      3) 门槛不是今天生成的（旧文件）             → 不发
+      4) 否则按门槛里的 material 决定
+    """
+    if marked_closed(closed_path, today):
+        return False, "今日休市（法定节假日），跳过发送。"
+    p = Path(gate_path)
+    if not p.exists():
+        return False, f"未找到 {p}（daily.py 未跑成功？），跳过发送"
+    try:
+        g = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return False, f"门控文件读取失败({e})，保守起见跳过发送"
+    gday = str(g.get("time", ""))[:10]
+    if gday != today:
+        return False, f"门控是 {gday or '未知日期'} 的旧记录（今天没跑出盘中报告），跳过发送。"
+    ok = bool(g.get("material"))
+    det = "；".join(g.get("reasons") or []) or "无明细"
+    return ok, "%s 实时分 %+.1f → %s%s" % (
+        g.get("time", "?"), float(g.get("score") or 0.0),
+        "发送" if ok else "与早间差距不大，跳过发送", ("（" + det + "）") if ok else "")
+
+
 def marked_closed(state_path, day: str) -> bool:
     """daily.py 是否已把「今天是休市日」写进标记文件（写的是同一天才算）。"""
     try:
@@ -155,22 +185,11 @@ def main():
     # daily.py 在每个盘中报告末尾写 intraday_gate.json；material=false 就直接不发。
     # 门控文件缺失/损坏时**不发**（宁可不发，也别把重复推送发出去）。
     if args.intraday_gate:
-        gate = settings.PROCESSED_DIR / "intraday_gate.json"
-        ok = False
-        if gate.exists():
-            try:
-                g = json.loads(gate.read_text(encoding="utf-8"))
-                ok = bool(g.get("material"))
-                det = "；".join(g.get("reasons") or []) or "无明细"
-                print("[盘中门槛] %s 实时分 %+.1f → %s%s" % (
-                    g.get("time", "?"), float(g.get("score") or 0.0),
-                    "发送" if ok else "与早间差距不大，跳过发送", ("（" + det + "）") if ok else ""))
-            except Exception as e:  # noqa: BLE001
-                print("[盘中门槛] 门控文件读取失败(%s)，保守起见跳过发送" % e)
-                return
-        else:
-            print("[盘中门槛] 未找到 %s（daily.py 未跑成功？），跳过发送" % gate)
-            return
+        ok, note = intraday_gate_decision(
+            settings.PROCESSED_DIR / "intraday_gate.json",
+            settings.PROCESSED_DIR / "market_closed.json",
+            _dt.date.today().strftime("%Y-%m-%d"))
+        print("[盘中门槛] " + note)
         if not ok:
             return
 

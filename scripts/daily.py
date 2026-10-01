@@ -423,6 +423,24 @@ def is_preopen(now_bj: pd.Timestamp, force: bool = False) -> bool:
     return now_bj < pd.Timestamp(f"{now_bj.strftime('%Y-%m-%d')} 09:30")
 
 
+def _mark_closed(day: str) -> None:
+    """休市标记（给 send_mail 用），并清掉盘中门槛文件。
+
+    休市日 daily.py 不会重写报告，若不清掉上一交易日留下的 intraday_gate.json
+    （material=true），盘中那几次 cron 就会拿着旧门槛把同一份报告再推一遍
+    —— 2026-10-01 国庆当天就是这么连发了 10:00/12:00 两封。
+    """
+    try:
+        (settings.PROCESSED_DIR / "market_closed.json").write_text(
+            json.dumps({"date": day, "reason": "holiday"}, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        (settings.PROCESSED_DIR / "intraday_gate.json").unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="每日增量更新 + 评分 + 明日判断")
     ap.add_argument("--full", action="store_true", help="全量抓取（否则增量）")
@@ -455,13 +473,21 @@ def main():
             and _today_s not in set(trade_dates):
         print(f"[休市] {_today_s} 非交易日（法定节假日休市），本次不生成日报。")
         print("[休市] 如需强制生成，加 --force-decision。")
-        try:  # 给 send_mail 留标记：报告没更新，别把上一份重复推一遍
-            (settings.PROCESSED_DIR / "market_closed.json").write_text(
-                json.dumps({"date": _today_s, "reason": "holiday"}, ensure_ascii=False),
-                encoding="utf-8")
-        except Exception:  # noqa: BLE001
-            pass
+        _mark_closed(_today_s)
         return
+
+    # 长假期间的周末那次（周日 21:00）也没有新数据：最新行情还停在节前，
+    # 再推一份和节前/节后早间一模一样的报告没有意义（hotmail 已因雷同邮件判过垃圾）。
+    if trade_dates and not args.force_decision and now_bj.weekday() >= 5:
+        try:
+            _bm = store.load(settings.BENCHMARK_TARGET)
+            _ld = pd.to_datetime(_bm["data_date"]).max().normalize()
+            if pd.notna(_ld) and (now_bj.normalize() - _ld).days > 3:
+                print(f"[休市] 最新行情仍停留在 {_ld:%Y-%m-%d}（长假中），本次不生成日报。")
+                _mark_closed(_today_s)
+                return
+        except Exception:  # noqa: BLE001  读不到就当没这回事，走原逻辑
+            pass
 
     # ---------- 1) 增量抓取 ----------
     today = _dt.date.today()

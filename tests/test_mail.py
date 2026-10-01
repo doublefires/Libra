@@ -40,6 +40,40 @@ def test_recently_sent_guard(tmp_path):
     assert recently_sent(f, "2026-10-08") is False
 
 
+def test_intraday_gate_decision(tmp_path):
+    """盘中门槛：休市/缺文件/旧文件一律不发；只有「今天生成的门槛」才按 material 放行。"""
+    import json
+
+    from scripts.send_mail import intraday_gate_decision
+    gate = tmp_path / "intraday_gate.json"
+    closed = tmp_path / "market_closed.json"
+    today = "2026-10-01"
+
+    # 1) 门槛文件不存在 → 不发
+    assert intraday_gate_decision(gate, closed, today)[0] is False
+
+    # 2) 昨天的 material=true 旧门槛（2026-10-01 连发两封的根因）→ 不发
+    gate.write_text(json.dumps({"time": "2026-09-30 18:46", "material": True,
+                                "score": -45.4, "reasons": ["实时分 +30.1"]}), encoding="utf-8")
+    ok, note = intraday_gate_decision(gate, closed, today)
+    assert ok is False and "旧记录" in note
+
+    # 3) 今天生成的门槛 → 按 material 放行
+    gate.write_text(json.dumps({"time": "2026-10-01 10:00", "material": True,
+                                "score": -45.0, "reasons": ["实时分 +30.0"]}), encoding="utf-8")
+    assert intraday_gate_decision(gate, closed, today)[0] is True
+    gate.write_text(json.dumps({"time": "2026-10-01 10:00", "material": False,
+                                "score": -45.0, "reasons": []}), encoding="utf-8")
+    assert intraday_gate_decision(gate, closed, today)[0] is False
+
+    # 4) 即使门槛是今天的，只要今天是休市日 → 不发
+    gate.write_text(json.dumps({"time": "2026-10-01 10:00", "material": True,
+                                "score": -45.0, "reasons": []}), encoding="utf-8")
+    closed.write_text('{"date": "2026-10-01", "reason": "holiday"}', encoding="utf-8")
+    ok, note = intraday_gate_decision(gate, closed, today)
+    assert ok is False and "休市" in note
+
+
 def test_marked_closed_guard(tmp_path):
     """休市标记：只有标记日期 == 今天才拦；昨天/损坏的标记不拦。"""
     from scripts.send_mail import marked_closed
